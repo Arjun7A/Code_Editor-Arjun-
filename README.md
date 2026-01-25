@@ -138,9 +138,9 @@ This project is for educational purposes.
 
 ## 🤝 Contributors
 
-- **Arjun** - Backend & ML Engineering
-- **Kunal** - Frontend & DevOps
-- **Aditya** - Blockchain & AI Integration
+- **Arjun** 
+- **Kunal** 
+- **Aditya** 
 
 ---
 
