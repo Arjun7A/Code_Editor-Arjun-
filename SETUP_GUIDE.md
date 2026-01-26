@@ -5,6 +5,18 @@
 This guide will help you set up the entire project on your local machine.
 
 ---
+# Backend
+cd backend
+pip install -r requirements.txt
+pip install semgrep
+
+# Frontend  
+cd frontend
+npm install
+
+# Blockchain
+cd blockchain
+npm install
 
 ## ✅ All Dependency Files Are Ready!
 
