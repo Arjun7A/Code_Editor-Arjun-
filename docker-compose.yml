@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/.env:/app/.env
+    environment:
+      - DEBUG=True
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - security-gate
+
+  # Uncomment when you need PostgreSQL
+  # db:
+  #   image: postgres:15
+  #   environment:
+  #     POSTGRES_USER: security_gate
+  #     POSTGRES_PASSWORD: password
+  #     POSTGRES_DB: security_gate_db
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - security-gate
+
+networks:
+  security-gate:
+    driver: bridge
+
+# volumes:
+#   postgres_data:
