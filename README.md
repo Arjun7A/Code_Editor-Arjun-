@@ -138,9 +138,9 @@ This project is for educational purposes.
 
 ## 🤝 Contributors
 
-- **Arjun**
-- **Kunal**
-- **Aditya**
+- **Arjun** 
+- **Kunal** 
+- **Aditya** 
 
 ---
 
