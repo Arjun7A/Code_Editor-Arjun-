@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import health, analyze
+from app.api.routes import health, analyze, predict
 from app.core.database import engine, Base
 
 # Create database tables
@@ -24,6 +24,7 @@ app.add_middleware(
 # Include routers
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(analyze.router, prefix="/api", tags=["analysis"])
+app.include_router(predict.router, prefix="/api", tags=["ml"])
 
 @app.get("/")
 async def root():
