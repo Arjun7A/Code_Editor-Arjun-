@@ -9,6 +9,8 @@ from app.schemas.pr_schemas import (
     PRAnalysisStatusResponse
 )
 from app.services.scanner_orchestrator import ScannerOrchestrator
+from app.services.ml_predictor import MLPredictor
+from app.core.config import settings
 from datetime import datetime
 import asyncio
 import tempfile
@@ -17,6 +19,7 @@ import subprocess
 
 router = APIRouter()
 scanner = ScannerOrchestrator()
+ml_predictor = MLPredictor(model_path=settings.ML_MODEL_PATH)
 
 
 async def run_analysis(pr_id: int, repo_url: str, db: Session):
@@ -49,16 +52,35 @@ async def run_analysis(pr_id: int, repo_url: str, db: Session):
             if pr:
                 summary = scan_results.get("summary", {})
                 pr.status = "completed"
-                pr.verdict = summary.get("verdict", "MANUAL_REVIEW")
                 
-                # Calculate risk score (0-100)
-                total_findings = summary.get("total_findings", 0)
-                critical = summary.get("critical", 0)
-                high = summary.get("high", 0)
-                medium = summary.get("medium", 0)
+                # ── ML-based risk scoring ───────────────────────────────
+                # Build feature dict from scan results for ML prediction
+                ml_features = {
+                    "files_changed": summary.get("files_changed", 5),
+                    "lines_added": summary.get("lines_added", 100),
+                    "lines_deleted": summary.get("lines_deleted", 30),
+                    "commit_count": summary.get("commit_count", 3),
+                    "author_reputation": summary.get("author_reputation", 0.5),
+                    "time_of_day": datetime.utcnow().hour,
+                    "day_of_week": datetime.utcnow().weekday(),
+                    "has_test_changes": int(summary.get("has_test_changes", False)),
+                    "num_issues": summary.get("total_findings", 0),
+                    "num_severity": summary.get("critical", 0) + summary.get("high", 0),
+                    "lang_ratio": summary.get("lang_ratio", 0.5),
+                    "historical_vuln_rate": summary.get("historical_vuln_rate", 0.05),
+                }
                 
-                risk_score = min(100, (critical * 25) + (high * 10) + (medium * 5))
-                pr.risk_score = risk_score
+                ml_result = ml_predictor.predict_risk(ml_features)
+                risk_score = ml_result["risk_score"] * 100  # Convert 0-1 to 0-100
+                pr.risk_score = round(risk_score, 1)
+                
+                # Determine verdict based on ML risk score
+                if risk_score >= 70:
+                    pr.verdict = "BLOCK"
+                elif risk_score >= 40:
+                    pr.verdict = "MANUAL_REVIEW"
+                else:
+                    pr.verdict = "AUTO_APPROVE"
                 
                 # Save individual scan results
                 for tool_name, tool_result in scan_results.items():

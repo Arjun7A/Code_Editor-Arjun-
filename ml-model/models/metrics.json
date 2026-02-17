@@ -1,0 +1,17 @@
+{
+  "accuracy": 0.9625,
+  "f1_score": 0.9455,
+  "roc_auc": 0.9957,
+  "confusion_matrix": [
+    [
+      153,
+      3
+    ],
+    [
+      6,
+      78
+    ]
+  ],
+  "test_size": 240,
+  "train_size": 960
+}
