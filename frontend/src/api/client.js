@@ -31,4 +31,16 @@ export const healthCheck = async () => {
   return response.data;
 };
 
+// ML Risk Prediction
+export const predictRisk = async (features) => {
+  const response = await api.post('/predict_risk', features);
+  return response.data;
+};
+
+// GitHub Repo ML Analysis
+export const analyzeGitHub = async (repo, numPrs = 10) => {
+  const response = await api.post('/analyze_github', { repo, num_prs: numPrs });
+  return response.data;
+};
+
 export default api;

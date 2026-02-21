@@ -81,7 +81,7 @@ class MLPredictor:
             features: dict with keys matching FEATURE_NAMES
 
         Returns:
-            dict with risk_score (0-1), risk_label, and feature_importance
+            dict with risk_score (0-1), risk_label, per-PR feature contributions
         """
         self._load_model()
 
@@ -102,11 +102,17 @@ class MLPredictor:
                 risk_probability = float(self._model.predict_proba(feature_array)[0][1])
                 risk_prediction = int(self._model.predict(feature_array)[0])
 
-                # Get feature importance
-                importances = self._model.feature_importances_
+                # Compute per-prediction feature contributions:
+                # Multiply each feature's value by global importance
+                # to get per-PR "contribution" (then normalise to sum=1).
+                global_importances = self._model.feature_importances_
+                raw_contributions = []
+                for i, name in enumerate(FEATURE_NAMES):
+                    raw_contributions.append(abs(feature_vector[i]) * global_importances[i])
+                total = sum(raw_contributions) or 1.0
                 importance_dict = {
-                    name: round(float(imp), 4)
-                    for name, imp in zip(FEATURE_NAMES, importances)
+                    name: round(c / total, 4)
+                    for name, c in zip(FEATURE_NAMES, raw_contributions)
                 }
 
                 return {

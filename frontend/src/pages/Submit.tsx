@@ -1,6 +1,5 @@
 import React from "react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Button } from "@/components/ui/button";
@@ -42,8 +41,12 @@ import {
   Zap,
   Lock,
   ScanLine,
+  ExternalLink,
+  BarChart3,
+  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { analyzeGitHub } from "@/api/client";
 
 type AnalysisStep = {
   id: string;
@@ -53,15 +56,14 @@ type AnalysisStep = {
 };
 
 export default function SubmitPRPage() {
-  const navigate = useNavigate();
   const { toast } = useToast();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [submissionMethod, setSubmissionMethod] = useState<"url" | "manual">(
     "url"
   );
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState(0);
+  const [expandedPR, setExpandedPR] = useState<number | null>(null);
 
   const [formData, setFormData] = useState({
     prUrl: "",
@@ -77,10 +79,13 @@ export default function SubmitPRPage() {
     notifyOnComplete: true,
   });
 
+  // Store real ML analysis results
+  const [analysisResults, setAnalysisResults] = useState<any>(null);
+
   const analysisSteps: AnalysisStep[] = [
     {
       id: "fetch",
-      label: "Fetching PR Data",
+      label: "Fetching PR Data from GitHub",
       status:
         currentStep > 0 ? "complete" : currentStep === 0 ? "running" : "pending",
       icon: <GitPullRequest className="h-4 w-4" />,
@@ -101,7 +106,7 @@ export default function SubmitPRPage() {
     },
     {
       id: "ml",
-      label: "ML Risk Assessment",
+      label: "ML Risk Assessment (XGBoost)",
       status:
         currentStep > 3 ? "complete" : currentStep === 3 ? "running" : "pending",
       icon: <Sparkles className="h-4 w-4" />,
@@ -115,22 +120,36 @@ export default function SubmitPRPage() {
     },
   ];
 
+  // Parse repo from a GitHub URL or owner/repo format
+  const parseRepo = (input: string): string | null => {
+    // Handle "owner/repo" format directly
+    if (/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(input.trim())) {
+      return input.trim();
+    }
+    // Handle full GitHub URLs: https://github.com/owner/repo/...
+    const match = input.match(/github\.com\/([^/]+\/[^/]+)/);
+    return match ? match[1].replace(/\.git$/, "") : null;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (submissionMethod === "url" && !formData.prUrl) {
+    const repoInput = submissionMethod === "url" ? formData.prUrl : formData.repository;
+
+    if (!repoInput) {
       toast({
         title: "Error",
-        description: "Please enter a valid PR URL",
+        description: "Please enter a GitHub repository URL or owner/repo",
         variant: "destructive",
       });
       return;
     }
 
-    if (submissionMethod === "manual" && !formData.diffContent) {
+    const repo = parseRepo(repoInput);
+    if (!repo) {
       toast({
-        title: "Error",
-        description: "Please enter the code diff content",
+        title: "Invalid Format",
+        description: "Please enter a valid GitHub URL (e.g., https://github.com/facebook/react) or owner/repo format (e.g., facebook/react)",
         variant: "destructive",
       });
       return;
@@ -139,30 +158,58 @@ export default function SubmitPRPage() {
     setIsAnalyzing(true);
     setAnalysisProgress(0);
     setCurrentStep(0);
+    setAnalysisResults(null);
 
-    // Simulate analysis steps
-    for (let i = 0; i < 5; i++) {
-      setCurrentStep(i);
-      const stepDuration = 800 + Math.random() * 400;
+    try {
+      // Step 0: Fetching PR data
+      setCurrentStep(0);
+      setAnalysisProgress(10);
+      await new Promise((r) => setTimeout(r, 300));
 
-      for (let p = 0; p <= 100; p += 5) {
-        await new Promise((r) => setTimeout(r, stepDuration / 20));
-        setAnalysisProgress(((i * 100 + p) / 5));
-      }
+      // Step 1: Security scanning (show progress while API call runs)
+      setCurrentStep(1);
+      setAnalysisProgress(25);
+
+      // Step 2: AI analysis
+      setCurrentStep(2);
+      setAnalysisProgress(40);
+
+      // Step 3: ML Risk Assessment — actual API call happens here
+      setCurrentStep(3);
+      setAnalysisProgress(60);
+
+      const results = await analyzeGitHub(repo, 10);
+
+      // Step 4: Complete
+      setCurrentStep(4);
+      setAnalysisProgress(85);
+      await new Promise((r) => setTimeout(r, 500));
+
+      setCurrentStep(5);
+      setAnalysisProgress(100);
+
+      setAnalysisResults(results);
+
+      const highCount = results.high_risk_count || 0;
+      const totalCount = results.total_prs_analyzed || 0;
+
+      toast({
+        title: "✅ Analysis Complete",
+        description: `Analyzed ${totalCount} PRs from ${repo} — ${highCount} high risk detected`,
+        variant: highCount > 0 ? "destructive" : "default",
+      });
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || "Failed to connect to analysis API";
+      setCurrentStep(-1);
+      setAnalysisProgress(0);
+      setIsAnalyzing(false);
+
+      toast({
+        title: "Analysis Failed",
+        description: msg,
+        variant: "destructive",
+      });
     }
-
-    setCurrentStep(5);
-    setAnalysisProgress(100);
-
-    await new Promise((r) => setTimeout(r, 500));
-
-    toast({
-      title: "Analysis Complete",
-      description: "Your PR has been analyzed successfully",
-    });
-
-    // Navigate to a sample PR detail page
-    navigate("/pr/1");
   };
 
   return (
@@ -185,106 +232,375 @@ export default function SubmitPRPage() {
               </p>
             </div>
 
-            {isAnalyzing ? (
-              <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-                <CardHeader className="text-center">
-                  <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-                    <Shield className="h-8 w-8 animate-pulse text-primary" />
-                  </div>
-                  <CardTitle className="text-2xl">Analyzing PR</CardTitle>
-                  <CardDescription>
-                    Please wait while we perform comprehensive security analysis
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-8">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">
-                        Overall Progress
-                      </span>
-                      <span className="font-mono text-foreground">
-                        {Math.round(analysisProgress)}%
-                      </span>
+            {isAnalyzing || analysisResults ? (
+              <div className="space-y-6">
+                <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                  <CardHeader className="text-center">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+                      {analysisResults ? (
+                        <CheckCircle2 className="h-8 w-8 text-success" />
+                      ) : (
+                        <Shield className="h-8 w-8 animate-pulse text-primary" />
+                      )}
                     </div>
-                    <Progress value={analysisProgress} className="h-2" />
-                  </div>
+                    <CardTitle className="text-2xl">
+                      {analysisResults ? "Analysis Complete" : "Analyzing PR"}
+                    </CardTitle>
+                    <CardDescription>
+                      {analysisResults
+                        ? `Analyzed ${analysisResults.total_prs_analyzed} PRs from ${analysisResults.repo}`
+                        : "Please wait while we perform comprehensive security analysis"}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-8">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">
+                          Overall Progress
+                        </span>
+                        <span className="font-mono text-foreground">
+                          {Math.round(analysisProgress)}%
+                        </span>
+                      </div>
+                      <Progress value={analysisProgress} className="h-2" />
+                    </div>
 
-                  <div className="space-y-4">
-                    {analysisSteps.map((step, index) => (
-                      <div
-                        key={step.id}
-                        className={cn(
-                          "flex items-center gap-4 rounded-lg border p-4 transition-all duration-300",
-                          step.status === "complete" &&
-                            "border-success/30 bg-success/5",
-                          step.status === "running" &&
-                            "border-primary/50 bg-primary/5",
-                          step.status === "pending" &&
-                            "border-border/30 bg-muted/20 opacity-50"
-                        )}
-                      >
+                    <div className="space-y-4">
+                      {analysisSteps.map((step, index) => (
                         <div
+                          key={step.id}
                           className={cn(
-                            "flex h-10 w-10 items-center justify-center rounded-full",
+                            "flex items-center gap-4 rounded-lg border p-4 transition-all duration-300",
                             step.status === "complete" &&
-                              "bg-success/20 text-success",
+                            "border-success/30 bg-success/5",
                             step.status === "running" &&
-                              "bg-primary/20 text-primary",
+                            "border-primary/50 bg-primary/5",
                             step.status === "pending" &&
-                              "bg-muted text-muted-foreground"
+                            "border-border/30 bg-muted/20 opacity-50"
                           )}
                         >
-                          {step.status === "running" ? (
-                            <Loader2 className="h-5 w-5 animate-spin" />
-                          ) : step.status === "complete" ? (
-                            <CheckCircle2 className="h-5 w-5" />
-                          ) : (
-                            step.icon
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <p
+                          <div
                             className={cn(
-                              "font-medium",
-                              step.status === "complete" && "text-success",
-                              step.status === "running" && "text-primary",
-                              step.status === "pending" && "text-muted-foreground"
+                              "flex h-10 w-10 items-center justify-center rounded-full",
+                              step.status === "complete" &&
+                              "bg-success/20 text-success",
+                              step.status === "running" &&
+                              "bg-primary/20 text-primary",
+                              step.status === "pending" &&
+                              "bg-muted text-muted-foreground"
                             )}
                           >
-                            {step.label}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {step.status === "running"
-                              ? "In progress..."
-                              : step.status === "complete"
-                                ? "Completed"
-                                : "Waiting..."}
-                          </p>
-                        </div>
-                        <Badge
-                          variant={
-                            step.status === "complete"
-                              ? "default"
-                              : step.status === "running"
-                                ? "secondary"
-                                : "outline"
-                          }
-                          className={cn(
-                            step.status === "complete" &&
+                            {step.status === "running" ? (
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                            ) : step.status === "complete" ? (
+                              <CheckCircle2 className="h-5 w-5" />
+                            ) : (
+                              step.icon
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <p
+                              className={cn(
+                                "font-medium",
+                                step.status === "complete" && "text-success",
+                                step.status === "running" && "text-primary",
+                                step.status === "pending" && "text-muted-foreground"
+                              )}
+                            >
+                              {step.label}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              {step.status === "running"
+                                ? "In progress..."
+                                : step.status === "complete"
+                                  ? "Completed"
+                                  : "Waiting..."}
+                            </p>
+                          </div>
+                          <Badge
+                            variant={
+                              step.status === "complete"
+                                ? "default"
+                                : step.status === "running"
+                                  ? "secondary"
+                                  : "outline"
+                            }
+                            className={cn(
+                              step.status === "complete" &&
                               "bg-success/20 text-success border-success/30"
-                          )}
-                        >
-                          {step.status === "running"
-                            ? "Running"
-                            : step.status === "complete"
-                              ? "Done"
-                              : `Step ${index + 1}`}
-                        </Badge>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+                            )}
+                          >
+                            {step.status === "running"
+                              ? "Running"
+                              : step.status === "complete"
+                                ? "Done"
+                                : `Step ${index + 1}`}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* ── ML Results ─────────────────────────────────────────── */}
+                {analysisResults && (
+                  <>
+                    {/* Summary Stats */}
+                    <div className="grid gap-4 sm:grid-cols-4">
+                      <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                        <CardContent className="pt-6 text-center">
+                          <p className="text-3xl font-bold text-foreground">
+                            {analysisResults.total_prs_analyzed}
+                          </p>
+                          <p className="text-sm text-muted-foreground">PRs Analyzed</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-red-500/30 bg-red-500/5">
+                        <CardContent className="pt-6 text-center">
+                          <p className="text-3xl font-bold text-red-400">
+                            {analysisResults.high_risk_count}
+                          </p>
+                          <p className="text-sm text-muted-foreground">High Risk</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-emerald-500/30 bg-emerald-500/5">
+                        <CardContent className="pt-6 text-center">
+                          <p className="text-3xl font-bold text-emerald-400">
+                            {analysisResults.low_risk_count}
+                          </p>
+                          <p className="text-sm text-muted-foreground">Low Risk</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                        <CardContent className="pt-6 text-center">
+                          <p className="text-3xl font-bold text-foreground">
+                            {(analysisResults.avg_risk_score * 100).toFixed(1)}%
+                          </p>
+                          <p className="text-sm text-muted-foreground">Avg Risk</p>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {/* PR Predictions Table */}
+                    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <BarChart3 className="h-5 w-5 text-violet-400" />
+                          Individual PR Predictions
+                        </CardTitle>
+                        <CardDescription>
+                          Each PR analyzed by the XGBoost model ({analysisResults.predictions[0]?.model_version || "xgboost_v1"})
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          {analysisResults.predictions.map((pr: any) => {
+                            const isExpanded = expandedPR === pr.pr_number;
+                            const importanceEntries = Object.entries(pr.feature_importance || {})
+                              .sort(([, a]: any, [, b]: any) => b - a);
+                            const topFeature = importanceEntries[0];
+                            return (
+                              <div
+                                key={pr.pr_number}
+                                className={cn(
+                                  "rounded-lg border transition-all",
+                                  pr.risk_label === "high"
+                                    ? "border-red-500/30"
+                                    : "border-emerald-500/30"
+                                )}
+                              >
+                                {/* Clickable header row */}
+                                <div
+                                  className="flex items-center gap-4 p-4 cursor-pointer hover:bg-accent/5 transition-colors"
+                                  onClick={() => setExpandedPR(isExpanded ? null : pr.pr_number)}
+                                >
+                                  {/* Risk badge */}
+                                  <div
+                                    className={cn(
+                                      "flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full text-sm font-bold",
+                                      pr.risk_label === "high"
+                                        ? "bg-red-500/20 text-red-400"
+                                        : "bg-emerald-500/20 text-emerald-400"
+                                    )}
+                                  >
+                                    {pr.risk_percentage.toFixed(0)}%
+                                  </div>
+
+                                  {/* PR info */}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-medium text-foreground truncate">
+                                        #{pr.pr_number} {pr.title}
+                                      </p>
+                                    </div>
+                                    <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap">
+                                      <span className="flex items-center gap-1">
+                                        <Github className="h-3 w-3" />
+                                        {pr.author}
+                                      </span>
+                                      <span>•</span>
+                                      <span>{pr.state}</span>
+                                      <span>•</span>
+                                      <span>{pr.features.files_changed} files</span>
+                                      <span>•</span>
+                                      <span className="text-emerald-400">+{pr.features.lines_added}</span>
+                                      <span className="text-red-400">-{pr.features.lines_deleted}</span>
+                                      {topFeature && (
+                                        <>
+                                          <span>•</span>
+                                          <span className="text-violet-400 text-xs">
+                                            Top factor: {(topFeature[0] as string).replace(/_/g, ' ')}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Risk label */}
+                                  <Badge
+                                    className={cn(
+                                      "flex-shrink-0",
+                                      pr.risk_label === "high"
+                                        ? "bg-red-500/20 text-red-400 border-red-500/30"
+                                        : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                    )}
+                                  >
+                                    {pr.risk_label === "high" ? "🔴 HIGH" : "🟢 LOW"}
+                                  </Badge>
+
+                                  {/* Expand / GitHub link */}
+                                  <ChevronDown className={cn(
+                                    "h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform",
+                                    isExpanded && "rotate-180"
+                                  )} />
+
+                                  <a
+                                    href={pr.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <ExternalLink className="h-4 w-4" />
+                                  </a>
+                                </div>
+
+                                {/* Expandable feature importance */}
+                                {isExpanded && (
+                                  <div className="border-t border-border/50 px-4 pb-4 pt-3 space-y-4">
+                                    <p className="text-sm font-medium text-foreground flex items-center gap-2">
+                                      <BarChart3 className="h-4 w-4 text-violet-400" />
+                                      Why this risk score?
+                                    </p>
+                                    <div className="space-y-2">
+                                      {importanceEntries.filter(([, imp]: [string, any]) => imp > 0.001).map(([name, importance]: [string, any]) => {
+                                        const pct = (importance * 100).toFixed(1);
+                                        const featureVal = pr.features[name];
+                                        const displayVal = typeof featureVal === 'number'
+                                          ? (Number.isInteger(featureVal) ? featureVal : featureVal.toFixed(3))
+                                          : featureVal;
+                                        return (
+                                          <div key={name}>
+                                            <div className="flex items-center justify-between text-sm mb-1">
+                                              <span className="text-muted-foreground capitalize">
+                                                {name.replace(/_/g, ' ')}
+                                                <span className="ml-2 text-xs font-mono text-foreground/60">
+                                                  = {displayVal}
+                                                </span>
+                                              </span>
+                                              <span className="font-mono text-xs text-violet-400">
+                                                {pct}% contribution
+                                              </span>
+                                            </div>
+                                            <div className="h-1.5 rounded-full bg-muted/30 overflow-hidden">
+                                              <div
+                                                className={cn(
+                                                  "h-full rounded-full transition-all duration-500",
+                                                  parseFloat(pct) > 15
+                                                    ? "bg-gradient-to-r from-violet-500 to-purple-500"
+                                                    : parseFloat(pct) > 5
+                                                      ? "bg-violet-500/50"
+                                                      : "bg-muted-foreground/30"
+                                                )}
+                                                style={{ width: `${Math.min(importance * 100, 100)}%` }}
+                                              />
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+
+                                    {/* Security Findings */}
+                                    {pr.security_findings && pr.security_findings.length > 0 && (
+                                      <div className="space-y-2">
+                                        <p className="text-sm font-medium text-foreground flex items-center gap-2">
+                                          <AlertTriangle className="h-4 w-4 text-amber-400" />
+                                          Security Findings ({pr.security_findings.length})
+                                        </p>
+                                        <div className="space-y-1.5">
+                                          {pr.security_findings.map((finding: string, i: number) => (
+                                            <div
+                                              key={i}
+                                              className="flex items-start gap-2 rounded-md bg-red-500/5 border border-red-500/20 px-3 py-2"
+                                            >
+                                              <Shield className="h-3.5 w-3.5 mt-0.5 text-red-400 flex-shrink-0" />
+                                              <p className="text-xs text-red-300/90">{finding}</p>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Interpretation */}
+                                    <div className="rounded-lg bg-muted/20 p-3">
+                                      <p className="text-xs text-muted-foreground">
+                                        <strong className="text-foreground">Interpretation:</strong>{' '}
+                                        This PR scored <strong className={pr.risk_label === 'high' ? 'text-red-400' : 'text-emerald-400'}>
+                                          {pr.risk_percentage.toFixed(1)}% risk
+                                        </strong> primarily because{' '}
+                                        <span className="text-foreground font-medium">
+                                          {topFeature ? (topFeature[0] as string).replace(/_/g, ' ') : 'multiple factors'}
+                                        </span>
+                                        {' '}had a high value
+                                        {importanceEntries[1] && importanceEntries[1][1] as number > 0.05 && (
+                                          <>, combined with{' '}
+                                            <span className="text-foreground font-medium">
+                                              {(importanceEntries[1][0] as string).replace(/_/g, ' ')}
+                                            </span></>
+                                        )}.
+                                        {(!pr.security_findings || pr.security_findings.length === 0) &&
+                                          ' No specific security threats detected.'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* New Analysis Button */}
+                    <div className="flex justify-center">
+                      <Button
+                        size="lg"
+                        variant="outline"
+                        className="gap-2"
+                        onClick={() => {
+                          setIsAnalyzing(false);
+                          setAnalysisResults(null);
+                          setAnalysisProgress(0);
+                          setCurrentStep(0);
+                        }}
+                      >
+                        <GitBranch className="h-4 w-4" />
+                        Analyze Another Repository
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Submission Method Toggle */}
