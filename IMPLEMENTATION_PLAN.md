@@ -12,7 +12,7 @@
 **Goal**: Get basic infrastructure running
 
 #### Days 1-2: Repository & Environment Setup
-- [ ] Create GitHub repository structure
+- [x] Create GitHub repository structure
   ```
   /backend (FastAPI)
   /frontend (React + Vite)
@@ -21,12 +21,12 @@
   /scripts (utilities)
   /.github/workflows (CI/CD)
   ```
-- [ ] Initialize backend with FastAPI
+- [x] Initialize backend with FastAPI
   - Basic project structure
   - Docker setup (Dockerfile + docker-compose)
   - Requirements.txt with core dependencies
   - Health check endpoint
-- [ ] Setup local development environment
+- [x] Setup local development environment
   - Python 3.11+ virtual environment
   - Node.js 18+
   - Docker Desktop
