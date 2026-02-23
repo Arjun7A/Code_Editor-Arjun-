@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     CLAUDE_API_KEY: Optional[str] = None
     SNYK_TOKEN: Optional[str] = None
     GITHUB_TOKEN: Optional[str] = None
+    SNYK_RUN_ALL_PRS: bool = False
     
     # Blockchain
     BLOCKCHAIN_PRIVATE_KEY: Optional[str] = None

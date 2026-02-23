@@ -46,7 +46,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { analyzeGitHub } from "@/api/client";
+import { analyzeGitHubAndMap, scanCode } from "@/lib/api";
 
 type AnalysisStep = {
   id: string;
@@ -81,6 +81,8 @@ export default function SubmitPRPage() {
 
   // Store real ML analysis results
   const [analysisResults, setAnalysisResults] = useState<any>(null);
+  // Store real scanner results (Snyk + Semgrep)
+  const [scanResults, setScanResults] = useState<any>(null);
 
   const analysisSteps: AnalysisStep[] = [
     {
@@ -159,47 +161,62 @@ export default function SubmitPRPage() {
     setAnalysisProgress(0);
     setCurrentStep(0);
     setAnalysisResults(null);
+    setScanResults(null);
 
     try {
-      // Step 0: Fetching PR data
+      // Step 0: Fetching PR data (visual)
       setCurrentStep(0);
       setAnalysisProgress(10);
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 400));
 
-      // Step 1: Security scanning (show progress while API call runs)
+      // Step 1: Security Scanning — await it first
       setCurrentStep(1);
       setAnalysisProgress(25);
+      let scanResult: PromiseSettledResult<Awaited<ReturnType<typeof scanCode>>>;
+      try {
+        const scanData = await scanCode({ repoUrl: repo });
+        scanResult = { status: "fulfilled", value: scanData };
+        setScanResults(scanData);
+      } catch (scanErr: any) {
+        console.warn("[Scanner] Scan failed:", scanErr?.message);
+        scanResult = { status: "rejected", reason: scanErr };
+        setScanResults(null);
+      }
+      await new Promise((r) => setTimeout(r, 300));
 
-      // Step 2: AI analysis
+      // Step 2: AI Analysis (visual — embedded inside analyze_github)
       setCurrentStep(2);
-      setAnalysisProgress(40);
+      setAnalysisProgress(50);
+      await new Promise((r) => setTimeout(r, 400));
 
-      // Step 3: ML Risk Assessment — actual API call happens here
+      // Step 3: ML Risk Assessment
       setCurrentStep(3);
-      setAnalysisProgress(60);
+      setAnalysisProgress(65);
+      const mlData = await analyzeGitHubAndMap(repo, 10);
+      const results = mlData.raw;
+      setAnalysisResults(results);
 
-      const results = await analyzeGitHub(repo, 10);
-
-      // Step 4: Complete
+      // Step 4: Blockchain / complete
       setCurrentStep(4);
-      setAnalysisProgress(85);
+      setAnalysisProgress(88);
       await new Promise((r) => setTimeout(r, 500));
 
       setCurrentStep(5);
       setAnalysisProgress(100);
 
-      setAnalysisResults(results);
-
-      const highCount = results.high_risk_count || 0;
-      const totalCount = results.total_prs_analyzed || 0;
+      const highCount = results?.high_risk_count ?? 0;
+      const totalCount = results?.total_prs_analyzed ?? 0;
+      const scanIssues = scanResult.status === "fulfilled"
+        ? ((scanResult.value.summary as any)?.total_issues ?? 0)
+        : 0;
 
       toast({
         title: "✅ Analysis Complete",
-        description: `Analyzed ${totalCount} PRs from ${repo} — ${highCount} high risk detected`,
-        variant: highCount > 0 ? "destructive" : "default",
+        description: `Analyzed ${totalCount} PRs — ${highCount} high risk, ${scanIssues} security issues`,
+        variant: (highCount > 0 || scanIssues > 0) ? "destructive" : "default",
       });
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.message || "Failed to connect to analysis API";
+      const msg = err?.message || "Failed to connect to analysis API";
       setCurrentStep(-1);
       setAnalysisProgress(0);
       setIsAnalyzing(false);
@@ -417,7 +434,7 @@ export default function SubmitPRPage() {
                                   {/* Risk badge */}
                                   <div
                                     className={cn(
-                                      "flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full text-sm font-bold",
+                                      "flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-bold",
                                       pr.risk_label === "high"
                                         ? "bg-red-500/20 text-red-400"
                                         : "bg-emerald-500/20 text-emerald-400"
@@ -459,7 +476,7 @@ export default function SubmitPRPage() {
                                   {/* Risk label */}
                                   <Badge
                                     className={cn(
-                                      "flex-shrink-0",
+                                      "shrink-0",
                                       pr.risk_label === "high"
                                         ? "bg-red-500/20 text-red-400 border-red-500/30"
                                         : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
@@ -470,7 +487,7 @@ export default function SubmitPRPage() {
 
                                   {/* Expand / GitHub link */}
                                   <ChevronDown className={cn(
-                                    "h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform",
+                                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
                                     isExpanded && "rotate-180"
                                   )} />
 
@@ -478,7 +495,7 @@ export default function SubmitPRPage() {
                                     href={pr.url}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                                    className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
                                     onClick={(e) => e.stopPropagation()}
                                   >
                                     <ExternalLink className="h-4 w-4" />
@@ -517,7 +534,7 @@ export default function SubmitPRPage() {
                                                 className={cn(
                                                   "h-full rounded-full transition-all duration-500",
                                                   parseFloat(pct) > 15
-                                                    ? "bg-gradient-to-r from-violet-500 to-purple-500"
+                                                    ? "bg-linear-to-r from-violet-500 to-purple-500"
                                                     : parseFloat(pct) > 5
                                                       ? "bg-violet-500/50"
                                                       : "bg-muted-foreground/30"
@@ -543,7 +560,7 @@ export default function SubmitPRPage() {
                                               key={i}
                                               className="flex items-start gap-2 rounded-md bg-red-500/5 border border-red-500/20 px-3 py-2"
                                             >
-                                              <Shield className="h-3.5 w-3.5 mt-0.5 text-red-400 flex-shrink-0" />
+                                              <Shield className="h-3.5 w-3.5 mt-0.5 text-red-400 shrink-0" />
                                               <p className="text-xs text-red-300/90">{finding}</p>
                                             </div>
                                           ))}
@@ -581,6 +598,242 @@ export default function SubmitPRPage() {
                       </CardContent>
                     </Card>
 
+                    {/* ── Scanner Results ─────────────────────────────────── */}
+                    {scanResults && (
+                      <>
+                        {/* Scanner Overview Cards */}
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+                            <CardContent className="pt-6 text-center">
+                              <p className="text-3xl font-bold text-foreground">
+                                {(scanResults.summary as any)?.total_issues ?? 0}
+                              </p>
+                              <p className="text-sm text-muted-foreground">Total Security Issues</p>
+                            </CardContent>
+                          </Card>
+
+                          {(scanResults.scanner_results as any[]).map((sr: any) => (
+                            <Card
+                              key={sr.id}
+                              className={cn(
+                                "border-border/50 bg-card/50",
+                                sr.issuesFound > 0
+                                  ? sr.name === "Snyk"
+                                    ? "border-amber-500/30 bg-amber-500/5"
+                                    : "border-red-500/30 bg-red-500/5"
+                                  : "border-emerald-500/30 bg-emerald-500/5"
+                              )}
+                            >
+                              <CardContent className="pt-6 text-center">
+                                <p className={cn(
+                                  "text-3xl font-bold",
+                                  sr.issuesFound > 0
+                                    ? sr.name === "Snyk" ? "text-amber-400" : "text-red-400"
+                                    : "text-emerald-400"
+                                )}>
+                                  {sr.issuesFound}
+                                </p>
+                                <p className="text-sm text-muted-foreground">
+                                  {sr.name} {sr.name === "Snyk" ? "Vulnerabilities" : "Findings"}
+                                </p>
+                                <Badge variant="outline" className="mt-2 text-xs capitalize">
+                                  {sr.status}
+                                </Badge>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+
+                        {/* Snyk Vulnerabilities */}
+                        {(scanResults.snyk_vulnerabilities as any[]).length > 0 && (
+                          <Card className="border-amber-500/20 bg-card/50 backdrop-blur-sm">
+                            <CardHeader>
+                              <CardTitle className="flex items-center gap-2 text-amber-400">
+                                <Shield className="h-5 w-5" />
+                                Snyk Vulnerabilities ({(scanResults.snyk_vulnerabilities as any[]).length})
+                              </CardTitle>
+                              <CardDescription>
+                                Dependency vulnerabilities detected by Snyk
+                              </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="space-y-3">
+                                {(scanResults.snyk_vulnerabilities as any[]).map((vuln: any) => (
+                                  <div
+                                    key={vuln.id}
+                                    className={cn(
+                                      "rounded-lg border p-4",
+                                      vuln.severity === "critical"
+                                        ? "border-red-500/30 bg-red-500/5"
+                                        : vuln.severity === "high"
+                                        ? "border-amber-500/30 bg-amber-500/5"
+                                        : vuln.severity === "medium"
+                                        ? "border-yellow-500/30 bg-yellow-500/5"
+                                        : "border-border/30 bg-muted/10"
+                                    )}
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="flex-1 min-w-0">
+                                        <p className="font-medium text-foreground">{vuln.title}</p>
+                                        {vuln.description && (
+                                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                                            {vuln.description}
+                                          </p>
+                                        )}
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                          {vuln.package && (
+                                            <Badge variant="outline" className="text-xs font-mono">
+                                              {vuln.package}
+                                              {vuln.version ? `@${vuln.version}` : ""}
+                                            </Badge>
+                                          )}
+                                          {vuln.cwe && (
+                                            <Badge variant="outline" className="text-xs">
+                                              {vuln.cwe}
+                                            </Badge>
+                                          )}
+                                          {vuln.cvss != null && (
+                                            <Badge variant="outline" className="text-xs">
+                                              CVSS {Number(vuln.cvss).toFixed(1)}
+                                            </Badge>
+                                          )}
+                                          {vuln.fixedVersion && (
+                                            <Badge className="text-xs bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+                                              Fix: {vuln.fixedVersion}
+                                            </Badge>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <Badge
+                                        className={cn(
+                                          "shrink-0 capitalize",
+                                          vuln.severity === "critical"
+                                            ? "bg-red-500/20 text-red-400 border-red-500/30"
+                                            : vuln.severity === "high"
+                                            ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                                            : vuln.severity === "medium"
+                                            ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                                            : "bg-muted text-muted-foreground"
+                                        )}
+                                      >
+                                        {vuln.severity}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {/* Semgrep Findings */}
+                        {(scanResults.semgrep_findings as any[]).length > 0 && (
+                          <Card className="border-red-500/20 bg-card/50 backdrop-blur-sm">
+                            <CardHeader>
+                              <CardTitle className="flex items-center gap-2 text-red-400">
+                                <ScanLine className="h-5 w-5" />
+                                Semgrep Findings ({(scanResults.semgrep_findings as any[]).length})
+                              </CardTitle>
+                              <CardDescription>
+                                Static analysis findings from Semgrep SAST
+                              </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="space-y-3">
+                                {(scanResults.semgrep_findings as any[]).map((finding: any) => (
+                                  <div
+                                    key={finding.id}
+                                    className={cn(
+                                      "rounded-lg border p-4",
+                                      finding.severity === "critical"
+                                        ? "border-red-500/30 bg-red-500/5"
+                                        : finding.severity === "high"
+                                        ? "border-amber-500/30 bg-amber-500/5"
+                                        : finding.severity === "medium"
+                                        ? "border-yellow-500/30 bg-yellow-500/5"
+                                        : "border-border/30 bg-muted/10"
+                                    )}
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="flex-1 min-w-0">
+                                        <p className="font-medium text-foreground">{finding.message}</p>
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                          <Badge variant="outline" className="text-xs font-mono">
+                                            {finding.ruleId}
+                                          </Badge>
+                                          {finding.path && (
+                                            <Badge variant="outline" className="text-xs">
+                                              {finding.path}
+                                              {finding.startLine ? `:${finding.startLine}` : ""}
+                                            </Badge>
+                                          )}
+                                        </div>
+                                        {finding.snippet && (
+                                          <pre className="mt-2 rounded bg-muted/30 px-3 py-2 text-xs font-mono text-muted-foreground overflow-x-auto max-h-24">
+                                            {finding.snippet}
+                                          </pre>
+                                        )}
+                                      </div>
+                                      <Badge
+                                        className={cn(
+                                          "shrink-0 capitalize",
+                                          finding.severity === "critical"
+                                            ? "bg-red-500/20 text-red-400 border-red-500/30"
+                                            : finding.severity === "high"
+                                            ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                                            : finding.severity === "medium"
+                                            ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                                            : "bg-muted text-muted-foreground"
+                                        )}
+                                      >
+                                        {finding.severity}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {/* No issues found */}
+                        {(scanResults.snyk_vulnerabilities as any[]).length === 0 &&
+                          (scanResults.semgrep_findings as any[]).length === 0 && (
+                          <Card className="border-emerald-500/20 bg-emerald-500/5">
+                            <CardContent className="flex items-center gap-4 pt-6 pb-6">
+                              <CheckCircle2 className="h-8 w-8 text-emerald-400 shrink-0" />
+                              <div>
+                                <p className="font-semibold text-emerald-400">
+                                  No Security Issues Found
+                                </p>
+                                <p className="text-sm text-muted-foreground">
+                                  Snyk and Semgrep found no vulnerabilities or code issues.
+                                </p>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+                      </>
+                    )}
+
+                    {/* Scanner unavailable notice */}
+                    {!scanResults && analysisResults && (
+                      <Card className="border-border/50 bg-card/50">
+                        <CardContent className="flex items-center gap-3 pt-6 pb-6">
+                          <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0" />
+                          <div>
+                            <p className="font-medium text-foreground">
+                              Scanner Results Unavailable
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              Snyk / Semgrep could not be reached. Ensure they are
+                              installed on the server and the repo URL is accessible.
+                            </p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
                     {/* New Analysis Button */}
                     <div className="flex justify-center">
                       <Button
@@ -590,6 +843,7 @@ export default function SubmitPRPage() {
                         onClick={() => {
                           setIsAnalyzing(false);
                           setAnalysisResults(null);
+                          setScanResults(null);
                           setAnalysisProgress(0);
                           setCurrentStep(0);
                         }}

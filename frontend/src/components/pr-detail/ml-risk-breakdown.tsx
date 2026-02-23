@@ -92,18 +92,33 @@ export function MLRiskBreakdown({ riskScore, factors }: MLRiskBreakdownProps) {
             Why This Score?
           </h5>
           <p className="mt-2 text-sm text-muted-foreground">
-            The ML model analyzes {factors.length} key features to determine risk.
-            This PR has significant contributions from{" "}
-            <span className="font-medium text-foreground">
-              {sortedFactors[0]?.name}
-            </span>{" "}
-            ({sortedFactors[0]?.contribution > 0 ? "+" : ""}
-            {sortedFactors[0]?.contribution}) and{" "}
-            <span className="font-medium text-foreground">
-              {sortedFactors[1]?.name}
-            </span>{" "}
-            ({sortedFactors[1]?.contribution > 0 ? "+" : ""}
-            {sortedFactors[1]?.contribution}).
+            {factors.length === 0 ? (
+              "No feature importance data available for this PR."
+            ) : (
+              <>
+                The ML model analyzes {factors.length} key features to determine risk.
+                {sortedFactors[0]?.name && (
+                  <>
+                    {" "}This PR has significant contributions from{" "}
+                    <span className="font-medium text-foreground">
+                      {sortedFactors[0].name}
+                    </span>
+                    {" "}({sortedFactors[0].contribution > 0 ? "+" : ""}
+                    {sortedFactors[0].contribution.toFixed(1)}%)
+                    {sortedFactors[1]?.name && (
+                      <>
+                        {" "}and{" "}
+                        <span className="font-medium text-foreground">
+                          {sortedFactors[1].name}
+                        </span>
+                        {" "}({sortedFactors[1].contribution > 0 ? "+" : ""}
+                        {sortedFactors[1].contribution.toFixed(1)}%).
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            )}
           </p>
         </div>
       </div>

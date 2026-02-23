@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
+import { RefreshCw } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { StatsCards } from "@/components/dashboard/stats-cards";
 import { PRList } from "@/components/dashboard/pr-list";
 import { FilterBar } from "@/components/dashboard/filter-bar";
+import { Button } from "@/components/ui/button";
 import {
   RiskTrendsChart,
   VerdictDistributionChart,
@@ -48,11 +50,18 @@ export default function DashboardPage() {
   });
   const [selectedFilter, setSelectedFilter] = useState("all");
   const [selectedRepo, setSelectedRepo] = useState("all");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualRefresh = useCallback(() => {
+    setRefreshKey((k) => k + 1);
+  }, []);
 
   // Fetch initial data
   useEffect(() => {
     async function loadData() {
       setLoading(true);
+      setIsRefreshing(true);
       try {
         const [statsData, prsData] = await Promise.all([
           fetchDashboardStats(),
@@ -64,10 +73,11 @@ export default function DashboardPage() {
         console.error("[v0] Error loading dashboard data:", error);
       } finally {
         setLoading(false);
+        setIsRefreshing(false);
       }
     }
     loadData();
-  }, [filters]);
+  }, [filters, refreshKey]);
 
   // Fetch chart data
   useEffect(() => {
@@ -91,6 +101,14 @@ export default function DashboardPage() {
       }
     }
     loadCharts();
+  }, [refreshKey]);
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRefreshKey((k) => k + 1);
+    }, 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleFilterChange = (filter: string) => {
@@ -120,6 +138,20 @@ export default function DashboardPage() {
           onRepoSelect={handleRepoSelect}
           selectedFilter={selectedFilter}
           selectedRepo={selectedRepo}
+          filterCounts={{
+            all: stats?.totalPRs ?? prs.length,
+            approved: stats?.approved ?? prs.filter((p) => p.verdict === "approved").length,
+            blocked: stats?.blocked ?? prs.filter((p) => p.verdict === "blocked").length,
+            manual_review: stats?.manualReview ?? prs.filter((p) => p.verdict === "manual_review").length,
+          }}
+          repos={Array.from(
+            new Map(prs.map((pr) => [pr.repository.fullName, pr.repository])).values()
+          ).map((r) => ({
+            id: r.fullName,
+            name: r.name,
+            owner: r.owner,
+            prCount: prs.filter((p) => p.repository.fullName === r.fullName).length,
+          }))}
         />
 
         <main className="flex-1 overflow-auto">
@@ -130,13 +162,27 @@ export default function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               className="mb-8"
             >
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                Security Dashboard
-              </h1>
-              <p className="mt-1 text-muted-foreground">
-                Monitor and analyze pull request security across your
-                repositories
-              </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h1 className="text-2xl font-bold tracking-tight text-foreground">
+                    Security Dashboard
+                  </h1>
+                  <p className="mt-1 text-muted-foreground">
+                    Monitor and analyze pull request security across your
+                    repositories
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleManualRefresh}
+                  disabled={isRefreshing}
+                  className="gap-2"
+                >
+                  <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
+              </div>
             </motion.div>
 
             {/* Stats Cards */}
@@ -166,12 +212,9 @@ export default function DashboardPage() {
               <FilterBar
                 filters={filters}
                 onFiltersChange={setFilters}
-                repositories={[
-                  "api-gateway",
-                  "web-app",
-                  "auth-service",
-                  "payment-service",
-                ]}
+                repositories={Array.from(
+                  new Set(prs.map((pr) => pr.repository.name))
+                ).filter(Boolean)}
               />
             </section>
 

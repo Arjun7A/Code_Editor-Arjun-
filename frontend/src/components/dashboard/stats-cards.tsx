@@ -51,8 +51,6 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
       icon: GitPullRequest,
       color: "text-primary",
       bgColor: "bg-primary/10",
-      trend: "+12.5%",
-      trendUp: true,
     },
     {
       title: "Approved",
@@ -60,8 +58,6 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
       icon: CheckCircle2,
       color: "text-success",
       bgColor: "bg-success/10",
-      trend: "+8.2%",
-      trendUp: true,
     },
     {
       title: "Blocked",
@@ -69,8 +65,6 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
       icon: XCircle,
       color: "text-destructive",
       bgColor: "bg-destructive/10",
-      trend: "-3.1%",
-      trendUp: false,
     },
     {
       title: "Manual Review",
@@ -78,8 +72,6 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
       icon: AlertTriangle,
       color: "text-warning",
       bgColor: "bg-warning/10",
-      trend: "+2.4%",
-      trendUp: true,
     },
     {
       title: "Avg Risk Score",
@@ -96,8 +88,6 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
       icon: Shield,
       color: "text-critical",
       bgColor: "bg-critical/10",
-      trend: "-15.2%",
-      trendUp: false,
     },
     {
       title: "Scans Today",
@@ -154,22 +144,6 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
                   </span>
                 )}
               </div>
-
-              {card.trend && (
-                <div className="mt-2 flex items-center gap-1">
-                  <span
-                    className={cn(
-                      "text-xs font-medium",
-                      card.trendUp ? "text-success" : "text-destructive"
-                    )}
-                  >
-                    {card.trend}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    vs last month
-                  </span>
-                </div>
-              )}
             </div>
           </motion.div>
         );

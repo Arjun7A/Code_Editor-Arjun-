@@ -13,6 +13,11 @@ class PullRequest(Base):
     status = Column(String, default="pending")  # pending, completed, failed
     risk_score = Column(Float, nullable=True)
     verdict = Column(String, nullable=True)  # AUTO_APPROVE, MANUAL_REVIEW, BLOCK
+    files_changed = Column(Integer, nullable=True)
+    lines_added = Column(Integer, nullable=True)
+    lines_deleted = Column(Integer, nullable=True)
+    author_name = Column(String, nullable=True)
+    feature_importance = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -30,6 +35,8 @@ class ScanResult(Base):
     findings = Column(JSON, nullable=True)
     severity = Column(String, nullable=True)  # critical, high, medium, low
     summary = Column(Text, nullable=True)
+    execution_time = Column(Float, nullable=True)
+    severity_counts = Column(JSON, nullable=True)  # {critical, high, medium, low}
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship

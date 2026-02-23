@@ -24,19 +24,13 @@ interface Repository {
   prCount: number;
 }
 
-const mockRepos: Repository[] = [
-  { id: "1", name: "api-gateway", owner: "acme-corp", prCount: 12 },
-  { id: "2", name: "web-app", owner: "acme-corp", prCount: 8 },
-  { id: "3", name: "auth-service", owner: "acme-corp", prCount: 5 },
-  { id: "4", name: "payment-service", owner: "acme-corp", prCount: 3 },
-  { id: "5", name: "notification-hub", owner: "acme-corp", prCount: 2 },
-];
-
 interface SidebarProps {
   onFilterChange?: (filter: string) => void;
   onRepoSelect?: (repoId: string) => void;
   selectedRepo?: string;
   selectedFilter?: string;
+  repos?: Repository[];
+  filterCounts?: { all: number; approved: number; blocked: number; manual_review: number };
 }
 
 export function Sidebar({
@@ -44,6 +38,8 @@ export function Sidebar({
   onRepoSelect,
   selectedRepo = "all",
   selectedFilter = "all",
+  repos = [],
+  filterCounts = { all: 0, approved: 0, blocked: 0, manual_review: 0 },
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -52,27 +48,27 @@ export function Sidebar({
       id: "all",
       label: "All PRs",
       icon: GitBranch,
-      count: 30,
+      count: filterCounts.all,
     },
     {
       id: "approved",
       label: "Approved",
       icon: CheckCircle2,
-      count: 18,
+      count: filterCounts.approved,
       color: "text-success",
     },
     {
       id: "blocked",
       label: "Blocked",
       icon: XCircle,
-      count: 5,
+      count: filterCounts.blocked,
       color: "text-destructive",
     },
     {
       id: "manual_review",
       label: "Manual Review",
       icon: AlertTriangle,
-      count: 7,
+      count: filterCounts.manual_review,
       color: "text-warning",
     },
   ];
@@ -217,13 +213,18 @@ export function Sidebar({
                 </AnimatePresence>
               </motion.button>
 
-              {mockRepos.map((repo) => {
-                const isActive = selectedRepo === repo.id;
+              {repos.length === 0 && !collapsed && (
+                <p className="px-3 py-2 text-xs text-muted-foreground">
+                  No repositories analyzed yet
+                </p>
+              )}
+              {repos.map((repo) => {
+                const isActive = selectedRepo === repo.name;
 
                 return (
                   <motion.button
                     key={repo.id}
-                    onClick={() => onRepoSelect?.(repo.id)}
+                    onClick={() => onRepoSelect?.(repo.name)}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                       isActive
