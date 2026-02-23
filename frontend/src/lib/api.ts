@@ -368,7 +368,25 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
 export async function fetchPRList(filters?: FilterOptions): Promise<PRAnalysis[]> {
   const params = new URLSearchParams({ skip: "0", limit: "50" });
   const raw = await apiFetch<BackendPR[]>(`/results?${params}`);
-  let prs = raw.map(mapBackendPR);
+  const mapped = raw.map(mapBackendPR);
+
+  // Guard against legacy duplicate DB rows for the same repo+PR.
+  // Keep the most recently completed/updated one.
+  const byPrKey = new Map<string, PRAnalysis>();
+  for (const pr of mapped) {
+    const key = `${pr.repository.fullName}#${pr.prNumber}`;
+    const current = byPrKey.get(key);
+    if (!current) {
+      byPrKey.set(key, pr);
+      continue;
+    }
+    const currentTs = Date.parse(current.completedAt ?? current.createdAt);
+    const candidateTs = Date.parse(pr.completedAt ?? pr.createdAt);
+    if ((Number.isFinite(candidateTs) ? candidateTs : 0) >= (Number.isFinite(currentTs) ? currentTs : 0)) {
+      byPrKey.set(key, pr);
+    }
+  }
+  let prs = Array.from(byPrKey.values());
 
   if (filters?.verdict && filters.verdict !== "all") {
     prs = prs.filter((pr) => pr.verdict === filters.verdict);

@@ -650,13 +650,42 @@ async def analyze_pull_request(
     db: Session = Depends(get_db),
 ):
     """Submit a PR for analysis. Returns immediately; analysis runs in background."""
-    pr = PullRequest(
-        repo_name=request.repo_name,
-        pr_number=request.pr_number,
-        pr_url=request.pr_url,
-        status="pending",
+    normalized_repo = (
+        _derive_repo_slug(request.repo_name, request.pr_url)
+        or request.repo_name.strip().strip("/").replace(".git", "")
     )
-    db.add(pr)
+
+    # Upsert by (repo_name, pr_number) so repeated submissions update the same row.
+    pr = (
+        db.query(PullRequest)
+        .filter(
+            PullRequest.repo_name == normalized_repo,
+            PullRequest.pr_number == request.pr_number,
+        )
+        .order_by(PullRequest.updated_at.desc())
+        .first()
+    )
+
+    if pr:
+        pr.pr_url = request.pr_url
+        pr.status = "pending"
+        pr.risk_score = None
+        pr.verdict = None
+        pr.author_name = None
+        pr.files_changed = None
+        pr.lines_added = None
+        pr.lines_deleted = None
+        pr.feature_importance = None
+        db.query(ScanResult).filter(ScanResult.pr_id == pr.id).delete()
+    else:
+        pr = PullRequest(
+            repo_name=normalized_repo,
+            pr_number=request.pr_number,
+            pr_url=request.pr_url,
+            status="pending",
+        )
+        db.add(pr)
+
     db.commit()
     db.refresh(pr)
 
