@@ -1,0 +1,16 @@
+{
+  "generated_at_utc": "2026-02-24T00:00:00+00:00",
+  "backend_url": "https://your-api.onrender.com",
+  "frontend_url": "https://your-app.vercel.app",
+  "overall_status": "pass",
+  "checks": [
+    {
+      "name": "backend_health",
+      "url": "https://your-api.onrender.com/api/health",
+      "ok": true,
+      "status_code": 200,
+      "duration_ms": 120,
+      "detail": "ok"
+    }
+  ]
+}

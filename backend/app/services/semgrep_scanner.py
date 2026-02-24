@@ -14,6 +14,7 @@ import shutil
 import tempfile
 from typing import Dict, List, Optional
 from pathlib import Path
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,7 @@ class SemgrepScanner:
             )
 
         rules_to_use = rules or self.default_rules
+        timeout_seconds = max(30, int(settings.SEMGREP_TIMEOUT_SECONDS or 120))
         # Pass each existing file path as a positional argument to semgrep
         cmd = (
             [semgrep_bin, "--json", "--quiet", "--no-git-ignore"]
@@ -170,7 +172,7 @@ class SemgrepScanner:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=300,
+                timeout=timeout_seconds,
             )
             elapsed = time.time() - start_time
 
@@ -202,7 +204,10 @@ class SemgrepScanner:
 
         except subprocess.TimeoutExpired:
             elapsed = time.time() - start_time
-            return self._empty_result(error="Semgrep timed out (300 s)", elapsed=elapsed)
+            return self._empty_result(
+                error=f"Semgrep timed out ({timeout_seconds} s)",
+                elapsed=elapsed,
+            )
         except Exception as exc:
             elapsed = time.time() - start_time
             logger.exception("Unexpected Semgrep error in scan_files")
@@ -227,6 +232,7 @@ class SemgrepScanner:
             + [target]
         )
         logger.info("Running semgrep: %s", " ".join(cmd))
+        timeout_seconds = max(30, int(settings.SEMGREP_TIMEOUT_SECONDS or 120))
 
         try:
             result = subprocess.run(
@@ -235,7 +241,7 @@ class SemgrepScanner:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=300,
+                timeout=timeout_seconds,
             )
             elapsed = time.time() - start_time
 
@@ -275,7 +281,10 @@ class SemgrepScanner:
 
         except subprocess.TimeoutExpired:
             elapsed = time.time() - start_time
-            return self._empty_result(error="Semgrep timed out (300 s)", elapsed=elapsed)
+            return self._empty_result(
+                error=f"Semgrep timed out ({timeout_seconds} s)",
+                elapsed=elapsed,
+            )
         except Exception as exc:
             elapsed = time.time() - start_time
             logger.exception("Unexpected Semgrep error")

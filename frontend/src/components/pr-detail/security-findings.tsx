@@ -33,11 +33,15 @@ import type { Vulnerability, SemgrepFinding, RiskLevel } from "@/lib/types";
 interface SecurityFindingsPanelProps {
   snykVulnerabilities: Vulnerability[];
   semgrepFindings: SemgrepFinding[];
+  semgrepStatus?: "success" | "failed" | "skipped";
+  semgrepSummary?: string;
 }
 
 export function SecurityFindingsPanel({
   snykVulnerabilities,
   semgrepFindings,
+  semgrepStatus = "skipped",
+  semgrepSummary,
 }: SecurityFindingsPanelProps) {
   // Group vulnerabilities by severity
   const groupedVulns = {
@@ -46,6 +50,13 @@ export function SecurityFindingsPanel({
     medium: snykVulnerabilities.filter((v) => v.severity === "medium"),
     low: snykVulnerabilities.filter((v) => v.severity === "low"),
   };
+
+  const semgrepHeaderText =
+    semgrepStatus === "failed"
+      ? "scan failed"
+      : semgrepStatus === "skipped"
+      ? "scan skipped"
+      : `${semgrepFindings.length} issues found`;
 
   return (
     <div className="space-y-4">
@@ -114,9 +125,20 @@ export function SecurityFindingsPanel({
           <div className="flex-1">
             <h3 className="font-semibold text-foreground">Semgrep Findings</h3>
             <p className="text-xs text-muted-foreground">
-              {semgrepFindings.length} issues found
+              {semgrepHeaderText}
             </p>
           </div>
+          <Badge
+            variant="outline"
+            className={cn(
+              "text-xs",
+              semgrepStatus === "failed" && "border-destructive/40 text-destructive",
+              semgrepStatus === "skipped" && "border-warning/40 text-warning",
+              semgrepStatus === "success" && "border-success/40 text-success"
+            )}
+          >
+            {semgrepStatus}
+          </Badge>
         </div>
 
         <div className="p-4 space-y-3">
@@ -124,7 +146,25 @@ export function SecurityFindingsPanel({
             <SemgrepFindingCard key={finding.id} finding={finding} index={index} />
           ))}
 
-          {semgrepFindings.length === 0 && (
+          {semgrepFindings.length === 0 && semgrepStatus === "failed" && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4">
+              <p className="text-sm font-medium text-destructive">Semgrep scan failed</p>
+              <p className="mt-1 text-xs text-destructive/90">
+                {semgrepSummary || "Semgrep could not complete this scan."}
+              </p>
+            </div>
+          )}
+
+          {semgrepFindings.length === 0 && semgrepStatus === "skipped" && (
+            <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
+              <p className="text-sm font-medium text-warning">Semgrep scan skipped</p>
+              <p className="mt-1 text-xs text-warning/90">
+                {semgrepSummary || "Semgrep was not executed for this PR."}
+              </p>
+            </div>
+          )}
+
+          {semgrepFindings.length === 0 && semgrepStatus === "success" && (
             <div className="py-8 text-center">
               <Bug className="mx-auto h-8 w-8 text-success" />
               <p className="mt-2 text-sm text-muted-foreground">

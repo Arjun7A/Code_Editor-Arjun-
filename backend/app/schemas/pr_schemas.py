@@ -41,6 +41,7 @@ class AuditLogResponse(BaseModel):
     blockchain_hash: Optional[str]
     blockchain_tx: Optional[str]
     decision: str
+    risk_data: Optional[Dict[str, Any]] = None
     timestamp: datetime
 
     class Config:

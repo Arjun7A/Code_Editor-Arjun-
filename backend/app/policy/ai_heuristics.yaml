@@ -1,0 +1,92 @@
+rules:
+  - id: py_eval
+    pattern: "\\beval\\s*\\("
+    title: "Dynamic code execution via eval"
+    description: "Use of eval can execute attacker-controlled input and lead to RCE."
+    recommendation: "Avoid eval; use safe parsers or strict allowlists for expected inputs."
+    confidence: 0.95
+    severity: high
+    type: security
+
+  - id: py_exec
+    pattern: "\\bexec\\s*\\("
+    title: "Dynamic code execution via exec"
+    description: "Use of exec can execute untrusted code and is a critical security risk."
+    recommendation: "Remove exec usage; replace with explicit function dispatch and validation."
+    confidence: 0.95
+    severity: high
+    type: security
+
+  - id: subprocess_shell_true
+    pattern: "subprocess\\.(run|call|Popen)\\s*\\(.*shell\\s*=\\s*True"
+    title: "Command execution with shell=True"
+    description: "shell=True may allow command injection when arguments include user-controlled data."
+    recommendation: "Use argument arrays with shell=False and sanitize all external inputs."
+    confidence: 0.9
+    severity: high
+    type: security
+
+  - id: os_system
+    pattern: "\\bos\\.system\\s*\\("
+    title: "Unsafe OS command execution"
+    description: "os.system can introduce command injection when input is not strictly controlled."
+    recommendation: "Use subprocess with argument lists and validate/sanitize parameters."
+    confidence: 0.88
+    severity: high
+    type: security
+
+  - id: requests_verify_false
+    pattern: "requests\\.(get|post|put|delete|request)\\s*\\(.*verify\\s*=\\s*False"
+    title: "TLS certificate verification disabled"
+    description: "Disabling TLS verification enables MITM attacks and weakens transport security."
+    recommendation: "Remove verify=False and use valid certificates for outbound HTTPS calls."
+    confidence: 0.92
+    severity: high
+    type: security
+
+  - id: jwt_verify_false
+    pattern: "verify_signature\\s*[:=]\\s*False"
+    title: "JWT signature verification disabled"
+    description: "Skipping JWT signature verification permits forged authentication tokens."
+    recommendation: "Always verify JWT signatures with trusted keys and expected algorithms."
+    confidence: 0.95
+    severity: high
+    type: security
+
+  - id: yaml_load
+    pattern: "\\byaml\\.load\\s*\\("
+    title: "Potential unsafe YAML deserialization"
+    description: "yaml.load may deserialize unsafe objects when parsing untrusted content."
+    recommendation: "Use yaml.safe_load for untrusted input and validate expected schema."
+    confidence: 0.85
+    severity: medium
+    type: security
+
+  - id: pickle_loads
+    pattern: "\\bpickle\\.(loads|load)\\s*\\("
+    title: "Unsafe pickle deserialization"
+    description: "pickle deserialization of untrusted data can lead to arbitrary code execution."
+    recommendation: "Avoid pickle for untrusted input; use safer formats like JSON."
+    confidence: 0.93
+    severity: high
+    type: security
+
+  - id: sql_string_concat
+    pattern: "(SELECT|INSERT|UPDATE|DELETE).*(\\+|%s|\\{.+\\})"
+    flags:
+      - IGNORECASE
+    title: "Potential SQL injection pattern"
+    description: "SQL query appears to be built dynamically and may allow SQL injection."
+    recommendation: "Use parameterized queries / prepared statements instead of string interpolation."
+    confidence: 0.82
+    severity: high
+    type: security
+
+  - id: hardcoded_secret
+    pattern: "(?i)\\b(api[_-]?key|secret|token|password|passwd)\\b\\s*[:=]\\s*[\"'][^\"']{8,}[\"']"
+    title: "Possible hardcoded secret"
+    description: "Sensitive credential-like value appears hardcoded in source code."
+    recommendation: "Move secrets to a secure secret manager or environment variables; rotate exposed keys."
+    confidence: 0.9
+    severity: high
+    type: security

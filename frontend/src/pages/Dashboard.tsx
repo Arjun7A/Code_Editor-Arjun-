@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { StatsCards } from "@/components/dashboard/stats-cards";
@@ -52,6 +52,7 @@ export default function DashboardPage() {
   const [selectedRepo, setSelectedRepo] = useState("all");
   const [refreshKey, setRefreshKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const handleManualRefresh = useCallback(() => {
     setRefreshKey((k) => k + 1);
@@ -62,6 +63,7 @@ export default function DashboardPage() {
     async function loadData() {
       setLoading(true);
       setIsRefreshing(true);
+      setApiError(null);
       try {
         const [statsData, prsData] = await Promise.all([
           fetchDashboardStats(),
@@ -70,7 +72,11 @@ export default function DashboardPage() {
         setStats(statsData);
         setPRs(prsData);
       } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load dashboard data";
         console.error("[v0] Error loading dashboard data:", error);
+        setApiError(message);
+        setStats(null);
+        setPRs([]);
       } finally {
         setLoading(false);
         setIsRefreshing(false);
@@ -95,7 +101,13 @@ export default function DashboardPage() {
         setSeverityBreakdown(severity);
         setScannerMetrics(scanner);
       } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load chart data";
         console.error("[v0] Error loading charts:", error);
+        setApiError((prev) => prev ?? message);
+        setRiskTrends([]);
+        setVerdictDist([]);
+        setSeverityBreakdown([]);
+        setScannerMetrics([]);
       } finally {
         setChartsLoading(false);
       }
@@ -184,6 +196,16 @@ export default function DashboardPage() {
                 </Button>
               </div>
             </motion.div>
+
+            {apiError && (
+              <div className="mb-6 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <p className="font-medium">Backend unavailable</p>
+                  <p className="text-destructive/90">{apiError}</p>
+                </div>
+              </div>
+            )}
 
             {/* Stats Cards */}
             <section className="mb-8">

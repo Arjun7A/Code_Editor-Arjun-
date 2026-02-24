@@ -1,0 +1,40 @@
+{
+  "generated_at_utc": "2026-02-24T10:13:30.478018+00:00",
+  "backend_url": "http://127.0.0.1:8001",
+  "frontend_url": null,
+  "overall_status": "pass",
+  "checks": [
+    {
+      "name": "backend_health",
+      "url": "http://127.0.0.1:8001/api/health",
+      "ok": true,
+      "status_code": 200,
+      "duration_ms": 523,
+      "detail": "ok"
+    },
+    {
+      "name": "backend_dashboard",
+      "url": "http://127.0.0.1:8001/api/dashboard-stats",
+      "ok": true,
+      "status_code": 200,
+      "duration_ms": 51,
+      "detail": "ok"
+    },
+    {
+      "name": "backend_policy_rules",
+      "url": "http://127.0.0.1:8001/api/policy/rules",
+      "ok": true,
+      "status_code": 200,
+      "duration_ms": 28,
+      "detail": "ok"
+    },
+    {
+      "name": "backend_scan",
+      "url": "http://127.0.0.1:8001/api/scan",
+      "ok": true,
+      "status_code": 200,
+      "duration_ms": 13979,
+      "detail": "ok"
+    }
+  ]
+}

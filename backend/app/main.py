@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import health, analyze, predict, github_analyzer
 from app.core.database import engine, Base
+from app.services.cache_service import cache
 import logging
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,16 @@ app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(analyze.router, prefix="/api", tags=["analysis"])
 app.include_router(predict.router, prefix="/api", tags=["ml"])
 app.include_router(github_analyzer.router, prefix="/api", tags=["github"])
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    cache.connect()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    cache.close()
 
 @app.get("/")
 async def root():

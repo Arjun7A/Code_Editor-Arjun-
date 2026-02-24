@@ -1,0 +1,44 @@
+default_action: AUTO_APPROVE
+
+rules:
+  - name: Block Critical Scanner Findings
+    description: Block whenever Snyk/Semgrep report at least one critical finding.
+    enabled: true
+    priority: 10
+    condition: "critical_count > 0"
+    action: BLOCK
+
+  - name: Block Repeated High Findings
+    description: Block when scanners report many high-severity findings.
+    enabled: true
+    priority: 20
+    condition: "high_count >= 3"
+    action: BLOCK
+
+  - name: Block High ML Risk
+    description: Block when ML risk score reaches high-risk threshold.
+    enabled: true
+    priority: 30
+    condition: "risk_score >= 70"
+    action: BLOCK
+
+  - name: Block Confirmed AI Security Issues
+    description: Block when AI confirms multiple high-confidence security issues.
+    enabled: true
+    priority: 40
+    condition: "ai_high_security_findings >= 2"
+    action: BLOCK
+
+  - name: Manual Review For Medium Risk
+    description: Require manual review for medium ML risk or one confirmed AI issue.
+    enabled: true
+    priority: 50
+    condition: "risk_score >= 40 or ai_high_security_findings >= 1"
+    action: MANUAL_REVIEW
+
+  - name: Manual Review For Moderate Findings
+    description: Require manual review when medium findings accumulate.
+    enabled: true
+    priority: 60
+    condition: "medium_count >= 5"
+    action: MANUAL_REVIEW

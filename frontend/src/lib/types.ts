@@ -74,6 +74,7 @@ export interface ScannerResult {
   status: "success" | "failed" | "skipped";
   issuesFound: number;
   executionTime: number;
+  summary?: string;
   severity: {
     critical: number;
     high: number;

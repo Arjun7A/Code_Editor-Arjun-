@@ -32,12 +32,15 @@ npx hardhat test
 
 # Deploy to Sepolia
 npx hardhat run scripts/deploy.js --network sepolia
+
+# Interact with deployed contract
+BLOCKCHAIN_CONTRACT_ADDRESS=0x... npx hardhat run scripts/interact.js --network sepolia
 ```
 
 ## Contract Functions
-- `addLog(commit, risk, verdict)` - Log a PR decision
-- `getLog(txId)` - Retrieve audit record
-- `verifyLog(txId)` - Verify integrity
+- `addLog(recordId, commit, risk, verdict)` - Log a PR decision
+- `getLog(recordId)` - Retrieve audit record
+- `verifyLog(recordId)` - Verify integrity
 
 ## Testnet
 - Network: Sepolia

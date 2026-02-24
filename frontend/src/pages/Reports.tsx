@@ -26,6 +26,7 @@ import {
   Activity,
   Download,
   Calendar,
+  AlertTriangle,
 } from "lucide-react";
 import {
   AreaChart,
@@ -75,10 +76,12 @@ export default function ReportsPage() {
   const [severityBreakdown, setSeverityBreakdown] = useState<SeverityBreakdown[]>([]);
   const [verdictDist, setVerdictDist] = useState<VerdictDistribution[]>([]);
   const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
+      setApiError(null);
       try {
         const [statsData, trends, severity, verdict] = await Promise.all([
           fetchDashboardStats(),
@@ -91,7 +94,13 @@ export default function ReportsPage() {
         setSeverityBreakdown(severity);
         setVerdictDist(verdict);
       } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load reports data";
         console.error("Error loading reports data:", error);
+        setApiError(message);
+        setStats(null);
+        setRiskTrends([]);
+        setSeverityBreakdown([]);
+        setVerdictDist([]);
       } finally {
         setLoading(false);
       }
@@ -158,6 +167,16 @@ export default function ReportsPage() {
                 </Button>
               </div>
             </div>
+
+            {apiError && (
+              <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <p className="font-medium">Reports data unavailable</p>
+                  <p className="text-destructive/90">{apiError}</p>
+                </div>
+              </div>
+            )}
 
             {/* Summary Cards — real data from API */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

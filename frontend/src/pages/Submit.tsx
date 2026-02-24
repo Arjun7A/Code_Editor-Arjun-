@@ -108,7 +108,7 @@ export default function SubmitPRPage() {
     },
     {
       id: "ml",
-      label: "ML Risk Assessment (XGBoost)",
+      label: "ML Risk Assessment + Finalization",
       status:
         currentStep > 3 ? "complete" : currentStep === 3 ? "running" : "pending",
       icon: <Sparkles className="h-4 w-4" />,
@@ -133,6 +133,13 @@ export default function SubmitPRPage() {
     return match ? match[1].replace(/\.git$/, "") : null;
   };
 
+  const parsePrNumber = (input: string): number | null => {
+    const match = input.match(/\/pull\/(\d+)(?:[/?#]|$)/i);
+    if (!match) return null;
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -148,6 +155,8 @@ export default function SubmitPRPage() {
     }
 
     const repo = parseRepo(repoInput);
+    const targetPrNumber =
+      submissionMethod === "url" ? parsePrNumber(formData.prUrl) : null;
     if (!repo) {
       toast({
         title: "Invalid Format",
@@ -173,13 +182,29 @@ export default function SubmitPRPage() {
       setCurrentStep(1);
       setAnalysisProgress(25);
       let scanResult: PromiseSettledResult<Awaited<ReturnType<typeof scanCode>>>;
-      try {
-        const scanData = await scanCode({ repoUrl: repo });
-        scanResult = { status: "fulfilled", value: scanData };
-        setScanResults(scanData);
-      } catch (scanErr: any) {
-        console.warn("[Scanner] Scan failed:", scanErr?.message);
-        scanResult = { status: "rejected", reason: scanErr };
+      if (formData.enableSecurityScan) {
+        try {
+          const scanData = await scanCode({ repoUrl: repo });
+          scanResult = { status: "fulfilled", value: scanData };
+          setScanResults(scanData);
+        } catch (scanErr: any) {
+          console.warn("[Scanner] Scan failed:", scanErr?.message);
+          scanResult = { status: "rejected", reason: scanErr };
+          setScanResults(null);
+        }
+      } else {
+        scanResult = {
+          status: "fulfilled",
+          value: {
+            scan_id: "disabled",
+            status: "skipped",
+            elapsed_seconds: 0,
+            snyk_vulnerabilities: [],
+            semgrep_findings: [],
+            scanner_results: [],
+            summary: { total_issues: 0 },
+          } as Awaited<ReturnType<typeof scanCode>>,
+        };
         setScanResults(null);
       }
       await new Promise((r) => setTimeout(r, 300));
@@ -192,7 +217,15 @@ export default function SubmitPRPage() {
       // Step 3: ML Risk Assessment
       setCurrentStep(3);
       setAnalysisProgress(65);
-      const mlData = await analyzeGitHubAndMap(repo, 10);
+      // If a specific PR number was parsed from the URL, analyze only that PR.
+      // Otherwise send 30 (backend max) — GitHub returns however many exist up to that cap.
+      const prsToAnalyze = targetPrNumber ? 1 : 30;
+      const mlData = await analyzeGitHubAndMap(repo, prsToAnalyze, {
+        targetPrNumber: targetPrNumber ?? undefined,
+        enableAI: formData.enableAI,
+        enableML: formData.enableML,
+        enableSecurityScan: formData.enableSecurityScan,
+      });
       const results = mlData.raw;
       setAnalysisResults(results);
 
@@ -568,6 +601,40 @@ export default function SubmitPRPage() {
                                       </div>
                                     )}
 
+                                    {pr.ai_findings && pr.ai_findings.length > 0 && (
+                                      <div className="space-y-2">
+                                        <p className="text-sm font-medium text-foreground flex items-center gap-2">
+                                          <Brain className="h-4 w-4 text-cyan-400" />
+                                          AI Agent Findings ({pr.ai_findings.length})
+                                        </p>
+                                        <div className="space-y-2">
+                                          {pr.ai_findings.slice(0, 5).map((finding: any, i: number) => (
+                                            <div
+                                              key={finding.id ?? i}
+                                              className="rounded-md border border-cyan-500/20 bg-cyan-500/5 px-3 py-2"
+                                            >
+                                              <div className="flex items-center justify-between gap-2">
+                                                <p className="text-xs font-medium text-cyan-300">{finding.title}</p>
+                                                <Badge variant="outline" className="text-[10px] capitalize">
+                                                  {finding.type}
+                                                </Badge>
+                                              </div>
+                                              {finding.description && (
+                                                <p className="mt-1 text-xs text-muted-foreground line-clamp-3">
+                                                  {finding.description}
+                                                </p>
+                                              )}
+                                              {finding.recommendation && (
+                                                <p className="mt-1 text-[11px] text-cyan-200/90">
+                                                  Fix: {finding.recommendation}
+                                                </p>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
                                     {/* Interpretation */}
                                     <div className="rounded-lg bg-muted/20 p-3">
                                       <p className="text-xs text-muted-foreground">
@@ -585,7 +652,8 @@ export default function SubmitPRPage() {
                                               {(importanceEntries[1][0] as string).replace(/_/g, ' ')}
                                             </span></>
                                         )}.
-                                        {(!pr.security_findings || pr.security_findings.length === 0) &&
+                                        {((!pr.security_findings || pr.security_findings.length === 0)
+                                          && (!pr.ai_findings || pr.ai_findings.length === 0)) &&
                                           ' No specific security threats detected.'}
                                       </p>
                                     </div>
@@ -1093,7 +1161,7 @@ export default function SubmitPRPage() {
                               AI Analysis
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              GPT-4 powered
+                              LangChain + xAI Grok
                             </p>
                           </div>
                         </div>

@@ -20,10 +20,23 @@ const BASE = (import.meta.env.VITE_API_URL ?? "/api").replace(/\/$/, "");
 //  Shared fetch wrapper
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+type ApiFetchInit = RequestInit & { timeoutMs?: number };
+
+async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T> {
+  const { timeoutMs = 120000, ...requestInit } = init ?? {};
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
-    ...init,
+    ...requestInit,
+    signal: controller.signal,
+  }).catch((err) => {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`API ${path} timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw err;
+  }).finally(() => {
+    clearTimeout(timeout);
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -75,6 +88,14 @@ interface BackendPR {
     severity_counts: Record<string, number> | null;
     created_at: string;
   }>;
+  audit_log?: {
+    id: number;
+    blockchain_hash: string | null;
+    blockchain_tx: string | null;
+    decision: string;
+    timestamp: string;
+    risk_data?: Record<string, unknown> | null;
+  } | null;
 }
 
 interface BackendScanResponse {
@@ -97,6 +118,7 @@ interface BackendGitHubResponse {
     pr_number: number;
     title: string;
     author: string;
+    verdict?: string;
     risk_score: number;
     risk_label: string;
     risk_percentage: number;
@@ -110,8 +132,43 @@ interface BackendGitHubResponse {
     using_fallback: boolean;
     snyk_vulnerabilities: Record<string, unknown>[];
     semgrep_findings: Record<string, unknown>[];
+    ai_findings: Record<string, unknown>[];
+    ai_summary: string;
+    ai_status: string;
     scanner_results: Record<string, unknown>[];
   }>;
+}
+
+interface AnalyzeGitHubOptions {
+  enableAI?: boolean;
+  enableML?: boolean;
+  enableSecurityScan?: boolean;
+  targetPrNumber?: number;
+}
+
+interface BackendPolicyRule {
+  name: string;
+  description: string;
+  enabled: boolean;
+  priority: number;
+  condition: string;
+  action: string;
+}
+
+interface BackendPolicyResponse {
+  default_action: string;
+  rules: BackendPolicyRule[];
+}
+
+interface BackendVerifyResponse {
+  verified: boolean;
+  hash: string;
+  timestamp: string;
+  tx_hash?: string | null;
+  block_number?: number | null;
+  network?: string;
+  explorer_url?: string | null;
+  status?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,15 +207,64 @@ function mapStatus(s: string): PRAnalysis["status"] {
   return (map[s] as PRAnalysis["status"]) ?? "queued";
 }
 
+function mapBlockchainVerification(
+  pr: BackendPR
+): PRAnalysis["blockchainVerification"] | undefined {
+  const audit = pr.audit_log;
+  if (!audit) return undefined;
+
+  const riskData =
+    audit.risk_data && typeof audit.risk_data === "object"
+      ? (audit.risk_data as Record<string, unknown>)
+      : {};
+  const chainMeta =
+    riskData["blockchain"] && typeof riskData["blockchain"] === "object"
+      ? (riskData["blockchain"] as Record<string, unknown>)
+      : {};
+
+  const txHash =
+    (typeof audit.blockchain_tx === "string" && audit.blockchain_tx) ||
+    (typeof chainMeta["tx_hash"] === "string" ? chainMeta["tx_hash"] : "");
+  const recordHash =
+    (typeof audit.blockchain_hash === "string" && audit.blockchain_hash) ||
+    (typeof chainMeta["record_hash"] === "string" ? chainMeta["record_hash"] : "");
+  const rawBlockNumber = chainMeta["block_number"];
+  const blockNumber =
+    typeof rawBlockNumber === "number"
+      ? rawBlockNumber
+      : Number(rawBlockNumber ?? 0);
+  const network =
+    (typeof chainMeta["network"] === "string" && chainMeta["network"]) ||
+    "Sepolia";
+  const explorerUrl =
+    (typeof chainMeta["explorer_url"] === "string" && chainMeta["explorer_url"]) ||
+    (txHash ? `https://sepolia.etherscan.io/tx/${txHash}` : "");
+  const status =
+    (typeof chainMeta["status"] === "string" && chainMeta["status"]) || "";
+  const verified = Boolean(txHash) && status !== "failed";
+
+  if (!txHash && !recordHash) return undefined;
+
+  return {
+    transactionHash: txHash || recordHash,
+    blockNumber: Number.isFinite(blockNumber) ? Math.max(0, blockNumber) : 0,
+    timestamp: audit.timestamp,
+    network,
+    explorerUrl,
+    verified,
+  };
+}
+
 /** Convert a BackendPR into the frontend PRAnalysis shape */
 function mapBackendPR(pr: BackendPR): PRAnalysis {
   const riskScore = pr.risk_score ?? 0;
   const repoName = pr.repo_name ?? "unknown/repo";
   const [owner = "unknown", name = "repo"] = repoName.split("/");
 
-  // Build snyk / semgrep findings from stored scan_results
+  // Build snyk / semgrep / AI findings from stored scan_results
   const snykResult = pr.scan_results?.find((r) => r.tool === "snyk");
   const semgrepResult = pr.scan_results?.find((r) => r.tool === "semgrep");
+  const aiAgentResult = pr.scan_results?.find((r) => r.tool === "ai_agent");
 
   const snykVulnerabilities = Array.isArray(snykResult?.findings)
     ? (snykResult!.findings as PRAnalysis["snykVulnerabilities"])
@@ -166,6 +272,21 @@ function mapBackendPR(pr: BackendPR): PRAnalysis {
 
   const semgrepFindings = Array.isArray(semgrepResult?.findings)
     ? (semgrepResult!.findings as PRAnalysis["semgrepFindings"])
+    : [];
+
+  // Map AI agent findings to frontend AIFinding shape
+  const aiFindings: PRAnalysis["aiFindings"] = Array.isArray(aiAgentResult?.findings)
+    ? (aiAgentResult!.findings as Array<Record<string, unknown>>).map((f, i) => ({
+        id: (f["id"] as string) ?? `ai-${pr.id}-${i}`,
+        type: (["security", "logic", "performance", "best_practice"].includes(f["type"] as string)
+          ? f["type"]
+          : "security") as PRAnalysis["aiFindings"][number]["type"],
+        title: (f["title"] as string) ?? "Finding",
+        description: (f["description"] as string) ?? "",
+        recommendation: (f["recommendation"] as string) ?? "",
+        confidence: typeof f["confidence"] === "number" ? f["confidence"] : 0.5,
+        affectedCode: (f["affectedCode"] as string | undefined) ?? undefined,
+      }))
     : [];
 
   // Build ScannerResult[] from stored scan results — use real severity_counts and execution_time
@@ -181,12 +302,18 @@ function mapBackendPR(pr: BackendPR): PRAnalysis {
           : r.severity_counts !== null
             ? "success"
             : "skipped";
+      const toolName =
+        r.tool === "snyk" ? "Snyk"
+        : r.tool === "semgrep" ? "Semgrep"
+        : r.tool === "ai_agent" ? "AI Agent"
+        : r.tool;
       return {
         id: `sr-${pr.id}-${i}`,
-        name: r.tool === "snyk" ? "Snyk" : r.tool === "semgrep" ? "Semgrep" : r.tool,
+        name: toolName,
         status,
         issuesFound: findings.length,
         executionTime: r.execution_time ?? 0,
+        summary: r.summary ?? undefined,
         severity: {
           critical: sc["critical"] ?? 0,
           high: sc["high"] ?? 0,
@@ -195,30 +322,6 @@ function mapBackendPR(pr: BackendPR): PRAnalysis {
         },
       };
     }) ?? [];
-
-  // Ensure both scanner rows exist for consistent UI, even for legacy DB rows.
-  const hasSnykRow = scannerResults.some((r) => r.name.toLowerCase() === "snyk");
-  const hasSemgrepRow = scannerResults.some((r) => r.name.toLowerCase() === "semgrep");
-  if (!hasSnykRow) {
-    scannerResults.push({
-      id: `sr-${pr.id}-snyk-missing`,
-      name: "Snyk",
-      status: "skipped",
-      issuesFound: snykVulnerabilities.length,
-      executionTime: 0,
-      severity: { critical: 0, high: 0, medium: 0, low: 0 },
-    });
-  }
-  if (!hasSemgrepRow) {
-    scannerResults.push({
-      id: `sr-${pr.id}-semgrep-missing`,
-      name: "Semgrep",
-      status: "skipped",
-      issuesFound: semgrepFindings.length,
-      executionTime: 0,
-      severity: { critical: 0, high: 0, medium: 0, low: 0 },
-    });
-  }
 
   const authorName = pr.author_name ?? "unknown";
 
@@ -250,7 +353,7 @@ function mapBackendPR(pr: BackendPR): PRAnalysis {
     deletions: pr.lines_deleted ?? 0,
     snykVulnerabilities,
     semgrepFindings,
-    aiFindings: [],
+    aiFindings,
     mlRiskFactors: Object.entries(pr.feature_importance ?? {}).map(([fname, fval]) => ({
       name: fname.replace(/_/g, " "),
       value: typeof fval === "number" ? fval : 0,
@@ -259,6 +362,7 @@ function mapBackendPR(pr: BackendPR): PRAnalysis {
       description: fname.replace(/_/g, " "),
     })),
     scannerResults,
+    blockchainVerification: mapBlockchainVerification(pr),
     codeDiffs: [],
   };
 }
@@ -269,6 +373,7 @@ function mapGitHubPrediction(
   repo: string
 ): PRAnalysis {
   const riskScore = Math.round(pred.risk_percentage ?? pred.risk_score * 100);
+  const mappedVerdict = mapVerdict(pred.verdict ?? null);
   const [owner = "unknown", name = repo] = repo.split("/");
 
   // Use real scanner findings from backend; only fall back to heuristic text if none returned
@@ -277,19 +382,23 @@ function mapGitHubPrediction(
   const semgrepFindings =
     (pred.semgrep_findings ?? []) as PRAnalysis["semgrepFindings"];
 
+  const aiFindings: PRAnalysis["aiFindings"] = Array.isArray(pred.ai_findings)
+    ? pred.ai_findings.map((f, i) => ({
+        id: (f["id"] as string) ?? `ai-gh-${pred.pr_number}-${i}`,
+        type: (["security", "logic", "performance", "best_practice"].includes(f["type"] as string)
+          ? f["type"]
+          : "security") as PRAnalysis["aiFindings"][number]["type"],
+        title: (f["title"] as string) ?? "Finding",
+        description: (f["description"] as string) ?? "",
+        recommendation: (f["recommendation"] as string) ?? "",
+        confidence: typeof f["confidence"] === "number" ? f["confidence"] : 0.5,
+        affectedCode: (f["affectedCode"] as string | undefined) ?? undefined,
+      }))
+    : [];
+
   // Use real scanner results from the backend if present
-  const scannerResults: PRAnalysis["scannerResults"] = (pred.scanner_results ?? []).length > 0
-    ? (pred.scanner_results as PRAnalysis["scannerResults"])
-    : [
-        {
-          id: `sr-gh-ml-${pred.pr_number}`,
-          name: "ML Risk Engine",
-          status: pred.using_fallback ? "failed" as const : "success" as const,
-          issuesFound: semgrepFindings.length + snykVulnerabilities.length,
-          executionTime: 0,
-          severity: { critical: 0, high: 0, medium: 0, low: 0 },
-        },
-      ];
+  const scannerResults: PRAnalysis["scannerResults"] =
+    (pred.scanner_results ?? []) as PRAnalysis["scannerResults"];
 
   return {
     id: `gh-${repo}-${pred.pr_number}`,
@@ -309,10 +418,7 @@ function mapGitHubPrediction(
       reputation: Math.round((pred.features?.author_reputation as number ?? 0.5) * 100),
     },
     status: "completed",
-    verdict:
-      riskScore >= 70 ? "blocked"
-      : riskScore >= 40 ? "manual_review"
-      : "approved",
+    verdict: mappedVerdict ?? "manual_review",
     riskScore,
     riskLevel: mapRiskLevel(riskScore),
     createdAt: pred.created_at,
@@ -322,7 +428,7 @@ function mapGitHubPrediction(
     deletions: (pred.features?.lines_deleted as number) ?? 0,
     snykVulnerabilities,
     semgrepFindings,
-    aiFindings: [],
+    aiFindings,
     mlRiskFactors: Object.entries(pred.feature_importance ?? {}).map(([fname, fval]) => ({
       name: fname.replace(/_/g, " "),
       value: typeof fval === "number" ? fval : 0,
@@ -340,33 +446,20 @@ function mapGitHubPrediction(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function fetchDashboardStats(): Promise<DashboardStats> {
-  try {
-    const data = await apiFetch<BackendStats>("/dashboard-stats");
-    return {
-      totalPRs: data.total_prs,
-      approved: data.approved,
-      blocked: data.blocked,
-      manualReview: data.manual_review,
-      avgRiskScore: data.avg_risk_score,
-      criticalIssues: data.critical_issues,
-      scansTodayAmount: data.scans_today,
-    };
-  } catch {
-    // Fallback when backend is unreachable during development
-    return {
-      totalPRs: 0,
-      approved: 0,
-      blocked: 0,
-      manualReview: 0,
-      avgRiskScore: 0,
-      criticalIssues: 0,
-      scansTodayAmount: 0,
-    };
-  }
+  const data = await apiFetch<BackendStats>("/dashboard-stats");
+  return {
+    totalPRs: data.total_prs,
+    approved: data.approved,
+    blocked: data.blocked,
+    manualReview: data.manual_review,
+    avgRiskScore: data.avg_risk_score,
+    criticalIssues: data.critical_issues,
+    scansTodayAmount: data.scans_today,
+  };
 }
 
 export async function fetchPRList(filters?: FilterOptions): Promise<PRAnalysis[]> {
-  const params = new URLSearchParams({ skip: "0", limit: "50" });
+  const params = new URLSearchParams({ skip: "0", limit: "200" });
   const raw = await apiFetch<BackendPR[]>(`/results?${params}`);
   const mapped = raw.map(mapBackendPR);
 
@@ -413,31 +506,77 @@ export async function fetchPRAnalysis(prId: string): Promise<PRAnalysis> {
     throw new Error("GitHub-sourced PRs are not stored in DB");
   }
   const raw = await apiFetch<BackendPR>(`/results/${prId}`);
+  const requested = Number(prId);
+  if (Number.isInteger(requested) && requested > 0 && raw.pr_number !== requested) {
+    try {
+      const list = await apiFetch<BackendPR[]>("/results?skip=0&limit=200");
+      const sameRepo = list.filter(
+        (pr) => pr.repo_name === raw.repo_name && pr.pr_number === requested
+      );
+      const fallbackPool = sameRepo.length > 0
+        ? sameRepo
+        : list.filter((pr) => pr.pr_number === requested);
+      if (fallbackPool.length > 0) {
+        const latest = fallbackPool.sort(
+          (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)
+        )[0];
+        return mapBackendPR(latest);
+      }
+    } catch {
+      // keep default behavior if fallback lookup fails
+    }
+  }
   return mapBackendPR(raw);
 }
 
 export async function fetchAuditLogs(
   filters?: FilterOptions
 ): Promise<AuditLogEntry[]> {
-  const raw = await apiFetch<BackendPR[]>("/results?skip=0&limit=100");
-  let logs: AuditLogEntry[] = raw.map((pr) => ({
-    id: String(pr.id),
-    prId: String(pr.id),
-    prNumber: pr.pr_number,
-    repository: {
-      id: `repo-${pr.id}`,
-      name: (pr.repo_name ?? "repo").split("/")[1] ?? "repo",
-      owner: (pr.repo_name ?? "unknown/repo").split("/")[0],
-      fullName: pr.repo_name ?? "unknown/repo",
-      url: `https://github.com/${pr.repo_name}`,
-    },
-    verdict: mapVerdict(pr.verdict) ?? "manual_review",
-    riskLevel: mapRiskLevel(pr.risk_score ?? 0),
-    riskScore: pr.risk_score ?? 0,
-    timestamp: pr.created_at,
-    blockchainStatus: "pending" as const,
-    blockchainHash: undefined,
-  }));
+  const raw = await apiFetch<BackendPR[]>("/results?skip=0&limit=200");
+  let logs: AuditLogEntry[] = raw.map((pr) => {
+    const audit = pr.audit_log;
+    const riskData =
+      audit?.risk_data && typeof audit.risk_data === "object"
+        ? (audit.risk_data as Record<string, unknown>)
+        : {};
+    const chainMeta =
+      riskData["blockchain"] && typeof riskData["blockchain"] === "object"
+        ? (riskData["blockchain"] as Record<string, unknown>)
+        : {};
+    const txHash =
+      (typeof audit?.blockchain_tx === "string" && audit.blockchain_tx) ||
+      (typeof chainMeta["tx_hash"] === "string" ? chainMeta["tx_hash"] : undefined);
+    const recordHash =
+      (typeof audit?.blockchain_hash === "string" && audit.blockchain_hash) ||
+      (typeof chainMeta["record_hash"] === "string" ? chainMeta["record_hash"] : undefined);
+    const chainStatus =
+      (typeof chainMeta["status"] === "string" && chainMeta["status"]) || "";
+
+    const blockchainStatus: AuditLogEntry["blockchainStatus"] = txHash
+      ? "verified"
+      : chainStatus === "failed"
+        ? "failed"
+        : "pending";
+
+    return {
+      id: String(pr.id),
+      prId: String(pr.id),
+      prNumber: pr.pr_number,
+      repository: {
+        id: `repo-${pr.id}`,
+        name: (pr.repo_name ?? "repo").split("/")[1] ?? "repo",
+        owner: (pr.repo_name ?? "unknown/repo").split("/")[0],
+        fullName: pr.repo_name ?? "unknown/repo",
+        url: `https://github.com/${pr.repo_name}`,
+      },
+      verdict: mapVerdict(pr.verdict) ?? "manual_review",
+      riskLevel: mapRiskLevel(pr.risk_score ?? 0),
+      riskScore: pr.risk_score ?? 0,
+      timestamp: audit?.timestamp ?? pr.created_at,
+      blockchainStatus,
+      blockchainHash: txHash ?? recordHash,
+    };
+  });
 
   if (filters?.verdict && filters.verdict !== "all") {
     logs = logs.filter((l) => l.verdict === filters.verdict);
@@ -470,120 +609,95 @@ export async function submitPR(
 }
 
 export async function fetchRiskTrends(): Promise<ChartDataPoint[]> {
-  try {
-    const data = await apiFetch<BackendStats>("/dashboard-stats");
-    return (data.risk_trend ?? []).map((r) => ({
-      date: r.date,
-      value: r.value,
-      label: r.label,
-    }));
-  } catch {
-    return [];
-  }
+  const data = await apiFetch<BackendStats>("/dashboard-stats");
+  return (data.risk_trend ?? []).map((r) => ({
+    date: r.date,
+    value: r.value,
+    label: r.label,
+  }));
 }
 
 export async function fetchVerdictDistribution(): Promise<VerdictDistribution[]> {
-  try {
-    const data = await apiFetch<BackendStats>("/dashboard-stats");
-    const dist = data.verdict_distribution ?? [];
-    const total = dist.reduce((s, d) => s + d.count, 0) || 1;
-    const verdictMap: Record<string, VerdictDistribution["verdict"]> = {
-      AUTO_APPROVE: "approved",
-      BLOCK: "blocked",
-      MANUAL_REVIEW: "manual_review",
-    };
-    return dist.map((d) => ({
-      verdict: (verdictMap[d.verdict] ?? d.verdict) as VerdictDistribution["verdict"],
-      count: d.count,
-      percentage: Math.round((d.count / total) * 1000) / 10,
-    }));
-  } catch {
-    return [];
-  }
+  const data = await apiFetch<BackendStats>("/dashboard-stats");
+  const dist = data.verdict_distribution ?? [];
+  const total = dist.reduce((s, d) => s + d.count, 0) || 1;
+  const verdictMap: Record<string, VerdictDistribution["verdict"]> = {
+    AUTO_APPROVE: "approved",
+    BLOCK: "blocked",
+    MANUAL_REVIEW: "manual_review",
+  };
+  return dist.map((d) => ({
+    verdict: (verdictMap[d.verdict] ?? d.verdict) as VerdictDistribution["verdict"],
+    count: d.count,
+    percentage: Math.round((d.count / total) * 1000) / 10,
+  }));
 }
 
 export async function fetchSeverityBreakdown(): Promise<SeverityBreakdown[]> {
-  try {
-    const data = await apiFetch<BackendStats>("/dashboard-stats");
-    const breakdown = data.severity_breakdown ?? {};
-    return (["critical", "high", "medium", "low"] as const).map((sev) => ({
-      severity: sev,
-      count: breakdown[sev] ?? 0,
-    }));
-  } catch {
-    return [
-      { severity: "critical", count: 0 },
-      { severity: "high", count: 0 },
-      { severity: "medium", count: 0 },
-      { severity: "low", count: 0 },
-    ];
-  }
+  const data = await apiFetch<BackendStats>("/dashboard-stats");
+  const breakdown = data.severity_breakdown ?? {};
+  return (["critical", "high", "medium", "low"] as const).map((sev) => ({
+    severity: sev,
+    count: breakdown[sev] ?? 0,
+  }));
 }
 
 export async function fetchScannerMetrics(): Promise<
   { name: string; avgTime: number; successRate: number }[]
 > {
-  try {
-    const data = await apiFetch<BackendStats>("/dashboard-stats");
-    const stats = data.scanner_stats ?? {};
-    return (["snyk", "semgrep"] as const).map((tool) => {
-      const s = stats[tool];
-      const total = s?.total ?? 0;
-      const success = s?.success ?? total;
-      const avgTime = s?.avg_time ?? 0;
-      return {
-        name: tool === "snyk" ? "Snyk" : "Semgrep",
-        avgTime: Math.round(avgTime * 10) / 10,
-        successRate: total > 0 ? Math.round((success / total) * 100) : 0,
-      };
-    });
-  } catch {
-    return [
-      { name: "Snyk", avgTime: 0, successRate: 0 },
-      { name: "Semgrep", avgTime: 0, successRate: 0 },
-    ];
-  }
+  const data = await apiFetch<BackendStats>("/dashboard-stats");
+  const stats = data.scanner_stats ?? {};
+  return (["snyk", "semgrep"] as const).map((tool) => {
+    const s = stats[tool];
+    const total = s?.total ?? 0;
+    const success = s?.success ?? total;
+    const avgTime = s?.avg_time ?? 0;
+    return {
+      name: tool === "snyk" ? "Snyk" : "Semgrep",
+      avgTime: Math.round(avgTime * 10) / 10,
+      successRate: total > 0 ? Math.round((success / total) * 100) : 0,
+    };
+  });
 }
 
 export async function fetchPolicyRules(): Promise<PolicyRule[]> {
-  // Policy rules are not yet stored in DB; return sensible defaults
-  return [
-    {
-      id: "rule-1",
-      name: "Block Critical Vulnerabilities",
-      description:
-        "Automatically block PRs with critical severity vulnerabilities",
-      enabled: true,
-      condition: "vulnerability.severity == 'critical'",
-      action: "block",
-    },
-    {
-      id: "rule-2",
-      name: "Require Review for High Risk",
-      description: "Require manual review for PRs with risk score above 70",
-      enabled: true,
-      condition: "riskScore > 70",
-      action: "warn",
-    },
-    {
-      id: "rule-3",
-      name: "Allow Trusted Authors",
-      description: "Auto-approve PRs from authors with reputation above 90",
-      enabled: false,
-      condition: "author.reputation > 90",
-      action: "allow",
-    },
-  ];
+  const data = await apiFetch<BackendPolicyResponse>("/policy/rules");
+  const actionMap: Record<string, PolicyRule["action"]> = {
+    BLOCK: "block",
+    MANUAL_REVIEW: "warn",
+    AUTO_APPROVE: "allow",
+  };
+
+  return (data.rules ?? []).map((rule, idx) => ({
+    id: `rule-${idx + 1}`,
+    name: rule.name,
+    description: rule.description,
+    enabled: Boolean(rule.enabled),
+    condition: rule.condition,
+    action: actionMap[rule.action] ?? "warn",
+  }));
 }
 
 export async function verifyBlockchainRecord(
-  _prId: string
+  prId: string
 ): Promise<{ verified: boolean; hash: string; timestamp: string }> {
-  // Blockchain not yet wired – return a placeholder
+  const idMatch = prId.match(/\d+/);
+  if (!idMatch) {
+    return {
+      verified: false,
+      hash: "",
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  const result = await apiFetch<BackendVerifyResponse>(
+    `/blockchain/verify/${idMatch[0]}`
+  );
+
   return {
-    verified: false,
-    hash: "",
-    timestamp: new Date().toISOString(),
+    verified: Boolean(result.verified),
+    hash: result.hash ?? result.tx_hash ?? "",
+    timestamp: result.timestamp ?? new Date().toISOString(),
   };
 }
 
@@ -616,11 +730,20 @@ export async function scanCode(
 
 export async function analyzeGitHubAndMap(
   repo: string,
-  numPrs = 10
+  numPrs = 10,
+  options: AnalyzeGitHubOptions = {}
 ): Promise<{ raw: BackendGitHubResponse; prs: PRAnalysis[] }> {
   const raw = await apiFetch<BackendGitHubResponse>("/analyze_github", {
     method: "POST",
-    body: JSON.stringify({ repo, num_prs: numPrs }),
+    timeoutMs: 240000,
+    body: JSON.stringify({
+      repo,
+      num_prs: numPrs,
+      target_pr_number: options.targetPrNumber,
+      enable_ai: options.enableAI ?? true,
+      enable_ml: options.enableML ?? true,
+      enable_security_scan: options.enableSecurityScan ?? true,
+    }),
   });
 
   const prs = raw.predictions.map((p) => mapGitHubPrediction(p, repo));

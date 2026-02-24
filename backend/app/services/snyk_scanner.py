@@ -135,6 +135,7 @@ class SnykScanner:
             cmd = [snyk_bin, "test", "--json", "--all-projects"]
             if snyk_token:
                 cmd += [f"--token={snyk_token}"]
+            timeout_seconds = max(30, int(settings.SNYK_TIMEOUT_SECONDS or 120))
 
             logger.info("Running snyk in %s", project_path)
 
@@ -145,7 +146,7 @@ class SnykScanner:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=180,
+                timeout=timeout_seconds,
                 env=env,
             )
             elapsed = time.time() - start_time
@@ -186,7 +187,10 @@ class SnykScanner:
 
         except subprocess.TimeoutExpired:
             elapsed = time.time() - start_time
-            return self._empty_result(error="Snyk timed out (180 s)", elapsed=elapsed)
+            return self._empty_result(
+                error=f"Snyk timed out ({timeout_seconds} s)",
+                elapsed=elapsed,
+            )
         except Exception as exc:
             elapsed = time.time() - start_time
             logger.exception("Unexpected Snyk error")

@@ -7,7 +7,7 @@
 ## 🎯 Project Overview
 
 Automated DevSecOps security gate that analyzes every GitHub Pull Request using:
-- 🤖 **AI Semantic Analysis** (LangChain + Claude API)
+- 🤖 **AI Semantic Analysis** (LangChain + xAI Grok API)
 - 📊 **ML Risk Prediction** (XGBoost)
 - 🔍 **Security Scanning** (Snyk + Semgrep)
 - ⛓️ **Blockchain Audit Logging** (Solidity + Sepolia)
@@ -102,13 +102,22 @@ git push origin dev
 ## 🏗️ Tech Stack
 
 **Backend**: FastAPI, Python, SQLAlchemy, Docker  
+**Caching**: Redis  
 **Frontend**: React, Vite, TailwindCSS, Recharts  
 **ML**: Scikit-learn, XGBoost, Pandas  
-**AI**: LangChain, Claude API  
+**AI**: LangChain, xAI Grok API  
 **Security**: Snyk CLI, Semgrep  
 **Blockchain**: Hardhat, Solidity, Ethers.js, Sepolia  
 **CI/CD**: GitHub Actions  
 **Deploy**: Render (backend), Vercel (frontend)
+
+---
+
+## ✅ Operational Verification
+
+- Deployment smoke verifier: `backend/scripts/verify_deployment.py`
+- Load test scripts: `load-tests/k6-smoke.js`, `load-tests/k6-stress.js`
+- Deployment runbook: `docs/deployment/RUNBOOK.md`
 
 ---
 

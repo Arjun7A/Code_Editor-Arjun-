@@ -34,12 +34,20 @@ const cardVariants = {
 };
 
 export function StatsCards({ stats, loading }: StatsCardsProps) {
-  if (loading || !stats) {
+  if (loading) {
     return (
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 7 }).map((_, i) => (
           <StatCardSkeleton key={i} />
         ))}
+      </div>
+    );
+  }
+
+  if (!stats) {
+    return (
+      <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-5 text-sm text-destructive">
+        Dashboard statistics are unavailable because the backend response failed.
       </div>
     );
   }

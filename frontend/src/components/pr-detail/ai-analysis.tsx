@@ -20,6 +20,8 @@ import type { AIFinding } from "@/lib/types";
 
 interface AIAnalysisSectionProps {
   findings: AIFinding[];
+  status?: "success" | "failed" | "skipped";
+  summary?: string;
 }
 
 const typeConfig = {
@@ -49,7 +51,16 @@ const typeConfig = {
   },
 };
 
-export function AIAnalysisSection({ findings }: AIAnalysisSectionProps) {
+/** Strip internal [provider=... model=...] prefix added by the backend. */
+function cleanSummary(raw: string): string {
+  return raw.replace(/^\[provider=[^\]]*\]\s*/i, "").trim();
+}
+
+export function AIAnalysisSection({ findings, status, summary }: AIAnalysisSectionProps) {
+  const effectiveStatus = status ?? "skipped";
+  const hasFindings = findings.length > 0;
+  const displaySummary = cleanSummary((summary || "").trim());
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -62,7 +73,7 @@ export function AIAnalysisSection({ findings }: AIAnalysisSectionProps) {
           <Brain className="h-4 w-4 text-primary" />
         </div>
         <div className="flex-1">
-          <h3 className="font-semibold text-foreground">LangChain AI Analysis</h3>
+          <h3 className="font-semibold text-foreground">Grok AI Analysis</h3>
           <p className="text-xs text-muted-foreground">
             AI-powered code intelligence and recommendations
           </p>
@@ -74,11 +85,35 @@ export function AIAnalysisSection({ findings }: AIAnalysisSectionProps) {
 
       {/* Findings */}
       <div className="p-4 space-y-3">
+        {effectiveStatus !== "success" && (
+          <div
+            className={cn(
+              "rounded-lg border px-3 py-2 text-sm",
+              effectiveStatus === "failed"
+                ? "border-destructive/30 bg-destructive/10 text-destructive"
+                : "border-warning/30 bg-warning/10 text-warning"
+            )}
+          >
+            <p className="font-medium">
+              {effectiveStatus === "failed" ? "AI analysis failed" : "AI analysis skipped"}
+            </p>
+            {displaySummary && (
+              <p className="mt-1 text-xs break-words">{displaySummary}</p>
+            )}
+          </div>
+        )}
+
+        {effectiveStatus === "success" && displaySummary && (
+          <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground break-words">
+            {displaySummary}
+          </div>
+        )}
+
         {findings.map((finding, index) => (
           <AIFindingCard key={finding.id} finding={finding} index={index} />
         ))}
 
-        {findings.length === 0 && (
+        {!hasFindings && effectiveStatus === "success" && (
           <div className="py-8 text-center">
             <Brain className="mx-auto h-8 w-8 text-success" />
             <p className="mt-2 text-sm text-muted-foreground">

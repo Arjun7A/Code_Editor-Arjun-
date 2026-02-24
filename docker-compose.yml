@@ -11,8 +11,25 @@ services:
       - ./backend/app:/app/app
       - ./backend/.env:/app/.env
     environment:
-      - DEBUG=True
+      DEBUG: "True"
+      REDIS_ENABLED: "true"
+      REDIS_URL: "redis://redis:6379/0"
+      CACHE_TTL_DASHBOARD_SECONDS: "30"
+      CACHE_TTL_RESULTS_SECONDS: "20"
+      CACHE_TTL_POLICY_SECONDS: "60"
+    depends_on:
+      - redis
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - security-gate
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
     networks:
       - security-gate
 
@@ -34,5 +51,5 @@ networks:
   security-gate:
     driver: bridge
 
-# volumes:
-#   postgres_data:
+volumes:
+  redis_data:

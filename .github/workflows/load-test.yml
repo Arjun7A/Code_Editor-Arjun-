@@ -1,0 +1,58 @@
+name: load-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: "Backend base URL (for example: https://your-api.onrender.com)"
+        required: true
+        type: string
+      profile:
+        description: "Load test profile"
+        required: true
+        default: both
+        type: choice
+        options:
+          - smoke
+          - stress
+          - both
+
+permissions:
+  contents: read
+
+jobs:
+  run-k6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Prepare output directory
+        run: mkdir -p load-test-results
+
+      - name: Run smoke profile
+        if: ${{ inputs.profile == 'smoke' || inputs.profile == 'both' }}
+        run: |
+          k6 run \
+            -e BASE_URL=${{ inputs.backend_url }} \
+            --summary-export load-test-results/smoke-summary.json \
+            load-tests/k6-smoke.js
+
+      - name: Run stress profile
+        if: ${{ inputs.profile == 'stress' || inputs.profile == 'both' }}
+        run: |
+          k6 run \
+            -e BASE_URL=${{ inputs.backend_url }} \
+            --summary-export load-test-results/stress-summary.json \
+            load-tests/k6-stress.js
+
+      - name: Upload summaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: load-test-results/

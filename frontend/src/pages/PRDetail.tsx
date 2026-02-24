@@ -81,6 +81,13 @@ export default function PRDetailPage() {
     );
   }
 
+  const aiScannerResult = pr.scannerResults.find(
+    (result) => result.name.toLowerCase() === "ai agent"
+  );
+  const semgrepScannerResult = pr.scannerResults.find(
+    (result) => result.name.toLowerCase() === "semgrep"
+  );
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -220,8 +227,14 @@ export default function PRDetailPage() {
               <SecurityFindingsPanel
                 snykVulnerabilities={pr.snykVulnerabilities}
                 semgrepFindings={pr.semgrepFindings}
+                semgrepStatus={semgrepScannerResult?.status}
+                semgrepSummary={semgrepScannerResult?.summary}
               />
-              <AIAnalysisSection findings={pr.aiFindings} />
+              <AIAnalysisSection
+                findings={pr.aiFindings}
+                status={aiScannerResult?.status}
+                summary={aiScannerResult?.summary}
+              />
             </div>
           </TabsContent>
 
@@ -230,6 +243,8 @@ export default function PRDetailPage() {
               <SecurityFindingsPanel
                 snykVulnerabilities={pr.snykVulnerabilities}
                 semgrepFindings={pr.semgrepFindings}
+                semgrepStatus={semgrepScannerResult?.status}
+                semgrepSummary={semgrepScannerResult?.summary}
               />
               <ScannerResultsTable results={pr.scannerResults} />
             </div>
@@ -237,7 +252,11 @@ export default function PRDetailPage() {
 
           <TabsContent value="ai">
             <div className="grid gap-6 lg:grid-cols-2">
-              <AIAnalysisSection findings={pr.aiFindings} />
+              <AIAnalysisSection
+                findings={pr.aiFindings}
+                status={aiScannerResult?.status}
+                summary={aiScannerResult?.summary}
+              />
               <MLRiskBreakdown
                 riskScore={pr.riskScore}
                 factors={pr.mlRiskFactors}
