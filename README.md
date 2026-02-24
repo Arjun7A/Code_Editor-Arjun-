@@ -10,7 +10,7 @@ Automated DevSecOps security gate that analyzes every GitHub Pull Request using:
 - 🤖 **AI Semantic Analysis** (LangChain + xAI Grok API)
 - 📊 **ML Risk Prediction** (XGBoost)
 - 🔍 **Security Scanning** (Snyk + Semgrep)
-- ⛓️ **Blockchain Audit Logging** (Solidity + Sepolia)
+- ⛓️ **Blockchain Audit Logging** (Solidity + Polygon Amoy Testnet)
 
 **Goal**: Catch security vulnerabilities before they reach production.
 
@@ -107,7 +107,7 @@ git push origin dev
 **ML**: Scikit-learn, XGBoost, Pandas  
 **AI**: LangChain, xAI Grok API  
 **Security**: Snyk CLI, Semgrep  
-**Blockchain**: Hardhat, Solidity, Ethers.js, Sepolia  
+**Blockchain**: Hardhat, Solidity, Ethers.js, Polygon Amoy  
 **CI/CD**: GitHub Actions  
 **Deploy**: Render (backend), Vercel (frontend)
 
