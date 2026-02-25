@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./security_gate.db"
     
+    # CORS – comma-separated list of allowed origins
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    
     # API Keys
     CLAUDE_API_KEY: Optional[str] = None
     # xAI Grok

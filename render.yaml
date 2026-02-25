@@ -1,0 +1,63 @@
+services:
+  - type: web
+    name: security-gate-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # ── Database (Supabase) ────────────────────────────────────────────────
+      - key: DATABASE_URL
+        sync: false          # paste your Supabase connection string in Render dashboard
+
+      # ── CORS – set to your Vercel frontend URL ─────────────────────────────
+      - key: CORS_ORIGINS
+        sync: false          # e.g. https://your-app.vercel.app
+
+      # ── AI (Groq) ──────────────────────────────────────────────────────────
+      - key: XAI_API_KEY
+        sync: false
+      - key: XAI_API_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: GROK_MODEL
+        value: meta-llama/llama-4-scout-17b-16e-instruct
+      - key: AI_REQUIRE_XAI
+        value: "true"
+      - key: AI_ENABLE_HEURISTIC_FALLBACK
+        value: "false"
+      - key: AI_MAX_CHUNKS
+        value: "1"
+      - key: AI_MAX_OUTPUT_TOKENS
+        value: "512"
+      - key: AI_CHUNK_TIMEOUT_SECONDS
+        value: "120"
+
+      # ── GitHub ─────────────────────────────────────────────────────────────
+      - key: GITHUB_TOKEN
+        sync: false
+
+      # ── Snyk ───────────────────────────────────────────────────────────────
+      - key: SNYK_TOKEN
+        sync: false
+      - key: SNYK_RUN_ALL_PRS
+        value: "false"
+      - key: SNYK_TIMEOUT_SECONDS
+        value: "120"
+
+      # ── Semgrep ────────────────────────────────────────────────────────────
+      - key: SEMGREP_TIMEOUT_SECONDS
+        value: "120"
+      - key: SEMGREP_MAX_FILES_PER_PR
+        value: "60"
+
+      # ── Redis (disabled – no Redis add-on by default) ──────────────────────
+      - key: REDIS_ENABLED
+        value: "false"
+
+      # ── Misc ───────────────────────────────────────────────────────────────
+      - key: DEBUG
+        value: "false"
+      - key: POLICY_RULES_PATH
+        value: app/policy/rules.yaml
