@@ -44,3 +44,5 @@ class PredictRiskResponse(BaseModel):
     feature_importance: Dict[str, float] = Field(default_factory=dict, description="Feature importance scores")
     model_version: str = Field(..., description="Model version used")
     using_fallback: bool = Field(..., description="Whether fallback heuristic was used")
+
+    model_config = {"protected_namespaces": ()}

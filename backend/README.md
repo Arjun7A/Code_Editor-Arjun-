@@ -17,10 +17,13 @@ backend/
 │   ├── models/              # Database models
 │   ├── services/
 │   │   ├── scanner.py       # Snyk + Semgrep integration
-│   │   ├── ai_agent.py      # LangChain AI
+│   │   ├── ai_agent.py      # Legacy AI module (kept for compatibility)
 │   │   ├── ml_model.py      # XGBoost predictor
 │   │   ├── policy.py        # Policy engine
 │   │   └── blockchain.py    # Web3 integration
+│   ├── pipeline/
+│   │   └── ai_layer/
+│   │       └── pr_agent_adapter.py  # Layer-2 PR-Agent adapter
 │   └── schemas/             # Pydantic models
 ├── tests/                   # Unit tests
 ├── Dockerfile
@@ -42,9 +45,9 @@ pip install -r requirements.txt
 # REDIS_ENABLED=true
 # REDIS_URL=redis://localhost:6379/0
 
-# Configure xAI Grok provider
-# XAI_API_KEY=...
-# GROK_MODEL=grok-3-latest
+# Configure PR-Agent provider
+# OPENAI_API_KEY=...
+# PR_AGENT_BINARY=... (optional absolute path to pr-agent executable)
 
 # Verify deployed frontend/backend URLs and export a JSON report
 python scripts/verify_deployment.py --backend-url https://your-api.onrender.com --frontend-url https://your-app.vercel.app --timeout 60

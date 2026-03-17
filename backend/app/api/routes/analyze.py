@@ -15,11 +15,12 @@ from app.schemas.pr_schemas import (
 )
 from app.services.scanner_orchestrator import ScannerOrchestrator
 from app.services.ml_predictor import MLPredictor
-from app.services.ai_agent import AIAgent
 from app.services.git_metadata import extract_repo_metadata
 from app.services.policy_engine import PolicyEngine
 from app.services.blockchain_service import BlockchainService
 from app.services.cache_service import cache
+from app.models.pipeline_contracts import PRContext
+from app.pipeline.ai_layer import PRAgentAdapter
 from app.core.config import settings
 from datetime import datetime, timedelta
 import tempfile
@@ -33,10 +34,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 scanner = ScannerOrchestrator()
 ml_predictor = MLPredictor(model_path=settings.ML_MODEL_PATH)
-ai_agent = AIAgent(
-    api_key=settings.XAI_API_KEY,
-    model=settings.GROK_MODEL,
-    base_url=settings.XAI_API_BASE_URL,
+pr_agent_adapter = PRAgentAdapter(
+    binary=settings.PR_AGENT_BINARY,
+    timeout_seconds=settings.PR_AGENT_TIMEOUT_SECONDS,
+    provider_name=settings.PR_AGENT_PROVIDER_NAME,
+    model_name=settings.PR_AGENT_MODEL_NAME,
+    use_diff_mode=settings.PR_AGENT_USE_DIFF_MODE,
+    allow_module_fallback=settings.PR_AGENT_ALLOW_MODULE_FALLBACK,
 )
 policy_engine = PolicyEngine(policy_path=settings.POLICY_RULES_PATH)
 blockchain_service = BlockchainService()
@@ -722,10 +726,35 @@ async def run_analysis(pr_id: int, repo_url: str):
                 f.get("filename", "") for f in pr_files if f.get("filename")
             ]
 
-            # ── AI Agent analysis (runs on GitHub diff patches, no disk access needed) ──
-            ai_result = await ai_agent.analyze_pr_diff(
-                pr_files, repo=repo_slug, pr_number=pr_number
+            # ── Layer-2 AI analysis via PR-Agent ─────────────────────────────
+            pr_diff = PRAgentAdapter.build_diff_from_files(pr_files)
+            pr_context = PRContext(
+                repo=repo_slug or pr.repo_name,
+                pr_number=pr_number,
+                commit_hash=str((pr_detail.get("head") or {}).get("sha") or ""),
+                diff=pr_diff,
+                files_changed=changed_filenames,
+                lines_added=_to_int(pr_detail.get("additions", 0)),
+                lines_deleted=_to_int(pr_detail.get("deletions", 0)),
             )
+            ai_started = datetime.utcnow()
+            ai_contract = pr_agent_adapter.analyze_pr(pr_context, scan_results={})
+            ai_exec_time = max(0.0, (datetime.utcnow() - ai_started).total_seconds())
+            ai_security_flags = list(ai_contract.get("ai_security_flags", []) or [])
+            ai_code_smells = list(ai_contract.get("ai_code_smells", []) or [])
+            ai_summary = str(ai_contract.get("ai_summary", "") or "").strip()
+            ai_findings = PRAgentAdapter.findings_from_contract(ai_contract)
+            ai_sev_counts = _severity_counts(ai_findings)
+            ai_meta = pr_agent_adapter.last_meta()
+            ai_status = str(ai_meta.get("status", "failed") or "failed")
+            ai_provider = str(ai_meta.get("provider", settings.PR_AGENT_PROVIDER_NAME))
+            ai_model = str(ai_meta.get("model", settings.PR_AGENT_MODEL_NAME))
+            ai_error = str(ai_meta.get("error", "") or "").strip()
+            if ai_status == "failed" and not ai_summary and ai_error:
+                ai_summary = f"PR-Agent failed: {ai_error[:240]}"
+            elif ai_status == "skipped" and not ai_summary and ai_error:
+                ai_summary = f"PR-Agent skipped: {ai_error[:240]}"
+            ai_confirmed_high = len(ai_security_flags)
 
             # Repository metadata from checked-out PR revision.
             metadata = extract_repo_metadata(temp_dir)
@@ -815,32 +844,30 @@ async def run_analysis(pr_id: int, repo_url: str):
                 "time_of_day": datetime.utcnow().hour,
                 "day_of_week": datetime.utcnow().weekday(),
                 "has_test_changes": int(has_test_changes),
-                "num_issues": int(comment_count + review_comment_count + total_findings),
+                "num_issues": int(
+                    comment_count
+                    + review_comment_count
+                    + total_findings
+                    + len(ai_security_flags)
+                    + len(ai_code_smells)
+                ),
                 "num_severity": int(high_critical),
                 "lang_ratio": float(metadata.get("lang_ratio", 0.5)),
                 "historical_vuln_rate": (
                     round(high_critical / total_findings, 4)
                     if total_findings > 0 else 0.0
                 ),
+                "ai_issue_count": len(ai_security_flags),
+                "ai_code_smell_count": len(ai_code_smells),
+                "ai_security_flags": len(ai_security_flags),
             }
 
             ml_result = ml_predictor.predict_risk(ml_features)
             risk_score = ml_result["risk_score"] * 100
 
-            # AI agent severity signals
-            ai_findings = ai_result.get("findings", [])
-            ai_sev_counts = ai_result.get("severity_counts", {"critical": 0, "high": 0, "medium": 0, "low": 0})
-            ai_status = ai_result.get("status", "skipped")
-            ai_provider = str(ai_result.get("provider", "none"))
-            ai_model = ai_result.get("model")
-            ai_summary = str(ai_result.get('summary', ''))
-            # High-confidence security findings from AI agent
-            ai_confirmed_high = sum(
-                1 for f in ai_findings
-                if f.get("type") == "security"
-                and f.get("confidence", 0) >= 0.8
-                and f.get("severity") in ("critical", "high")
-            )
+            # Include PR-Agent signals in ML features
+            ai_issue_count = len(ai_security_flags)
+            ai_code_smell_count = len(ai_code_smells)
 
             critical_count = (
                 snyk_counts["critical"]
@@ -928,9 +955,9 @@ async def run_analysis(pr_id: int, repo_url: str):
                 pr_id=pr_id,
                 tool="ai_agent",
                 findings=ai_findings,
-                severity=ai_result.get("severity", "info"),
+                severity=_top_severity(ai_sev_counts),
                 summary=ai_summary,
-                execution_time=float(ai_result.get("execution_time", 0.0) or 0.0),
+                execution_time=float(ai_exec_time or 0.0),
                 severity_counts=ai_sev_counts if ai_status == "success" else None,
             ))
 
@@ -996,6 +1023,183 @@ async def run_analysis(pr_id: int, repo_url: str):
         db.close()
 
 
+async def run_ai_analysis_only(pr_id: int, repo_url: str):
+    """
+    Background task: clone repo, checkout PR, run ONLY PR-Agent AI analysis (no scanners/ML).
+    Fast analysis for testing AI component alone.
+    """
+    db = SessionLocal()
+    try:
+        pr = db.query(PullRequest).filter(PullRequest.id == pr_id).first()
+        if not pr:
+            return
+
+        clone_url = _derive_repo_clone_url(repo_url)
+        repo_slug = _derive_repo_slug(pr.repo_name, pr.pr_url or repo_url)
+        pr_number = max(1, _to_int(pr.pr_number, 1))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", clone_url, temp_dir],
+                    check=True, capture_output=True, timeout=120,
+                )
+            except Exception as exc:
+                logger.error("Clone failed for PR %s (%s): %s", pr_id, clone_url, exc)
+                pr.status = "error"
+                pr.verdict = "ERROR"
+                db.commit()
+                return
+
+            checked_out = _checkout_pr_head(temp_dir, pr_number)
+            if not checked_out:
+                logger.error("Could not checkout PR head for PR %s", pr_id)
+                pr.status = "error"
+                pr.verdict = "ERROR"
+                db.commit()
+                return
+
+            # PR details/files from GitHub API
+            pr_detail: Dict[str, Any] = {}
+            pr_files: List[Dict[str, Any]] = []
+            if repo_slug:
+                pr_detail = _fetch_pr_detail(repo_slug, pr_number)
+                pr_files = _fetch_pr_files(repo_slug, pr_number)
+            if not pr_files:
+                git_fallback_files = _collect_pr_files_from_git(temp_dir)
+                if git_fallback_files:
+                    pr_files = git_fallback_files
+
+            changed_filenames = [
+                f.get("filename", "") for f in pr_files if f.get("filename")
+            ]
+
+            # ── RUN ONLY AI ANALYSIS ──────────────────────────────────────
+            pr_diff = PRAgentAdapter.build_diff_from_files(pr_files)
+            pr_context = PRContext(
+                repo=repo_slug or pr.repo_name,
+                pr_number=pr_number,
+                commit_hash=str((pr_detail.get("head") or {}).get("sha") or ""),
+                diff=pr_diff,
+                files_changed=changed_filenames,
+                lines_added=_to_int(pr_detail.get("additions", 0)),
+                lines_deleted=_to_int(pr_detail.get("deletions", 0)),
+            )
+            ai_started = datetime.utcnow()
+            ai_contract = pr_agent_adapter.analyze_pr(pr_context, scan_results={})
+            ai_exec_time = max(0.0, (datetime.utcnow() - ai_started).total_seconds())
+            ai_security_flags = list(ai_contract.get("ai_security_flags", []) or [])
+            ai_code_smells = list(ai_contract.get("ai_code_smells", []) or [])
+            ai_summary = str(ai_contract.get("ai_summary", "") or "").strip()
+            ai_findings = PRAgentAdapter.findings_from_contract(ai_contract)
+            ai_sev_counts = _severity_counts(ai_findings)
+            ai_meta = pr_agent_adapter.last_meta()
+            ai_status = str(ai_meta.get("status", "failed") or "failed")
+            ai_provider = str(ai_meta.get("provider", settings.PR_AGENT_PROVIDER_NAME))
+            ai_model = str(ai_meta.get("model", settings.PR_AGENT_MODEL_NAME))
+            ai_error = str(ai_meta.get("error", "") or "").strip()
+            if ai_status == "failed" and not ai_summary and ai_error:
+                ai_summary = f"PR-Agent failed: {ai_error[:240]}"
+            elif ai_status == "skipped" and not ai_summary and ai_error:
+                ai_summary = f"PR-Agent skipped: {ai_error[:240]}"
+
+            author_name = (
+                (pr_detail.get("user") or {}).get("login")
+                or "unknown"
+            )
+
+            # NO Snyk, NO Semgrep, NO ML - just record AI result
+            pr.status = "completed"
+            pr.author_name = author_name
+            pr.files_changed = len(changed_filenames)
+            pr.lines_added = _to_int(pr_detail.get("additions", 0))
+            pr.lines_deleted = _to_int(pr_detail.get("deletions", 0))
+            pr.verdict = "AI_ANALYSIS_COMPLETE"
+            pr.risk_score = 0.0
+
+            # Clear old results and add only AI result
+            db.query(ScanResult).filter(ScanResult.pr_id == pr_id).delete()
+            db.add(ScanResult(
+                pr_id=pr_id,
+                tool="ai_agent",
+                findings=ai_findings,
+                severity=_top_severity(ai_sev_counts),
+                summary=ai_summary,
+                execution_time=float(ai_exec_time or 0.0),
+                severity_counts=ai_sev_counts if ai_status == "success" else None,
+            ))
+
+            db.commit()
+            _invalidate_read_caches()
+
+    except Exception:
+        logger.exception("AI analysis failed for PR %s", pr_id)
+        try:
+            pr = db.query(PullRequest).filter(PullRequest.id == pr_id).first()
+            if pr:
+                pr.status = "error"
+                pr.verdict = "ERROR"
+                db.commit()
+                _invalidate_read_caches()
+        except Exception:
+            db.rollback()
+    finally:
+        db.close()
+
+
+@router.post("/analyze_ai_only", response_model=PRAnalysisStatusResponse, status_code=202)
+async def analyze_ai_only(
+    request: PRAnalyzeRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Submit a PR for AI-ONLY analysis (no scanners/ML). Returns immediately."""
+    normalized_repo = (
+        _derive_repo_slug(request.repo_name, request.pr_url)
+        or request.repo_name.strip().strip("/").replace(".git", "")
+    )
+
+    pr = (
+        db.query(PullRequest)
+        .filter(
+            PullRequest.repo_name == normalized_repo,
+            PullRequest.pr_number == request.pr_number,
+        )
+        .order_by(PullRequest.updated_at.desc())
+        .first()
+    )
+
+    if pr:
+        pr.pr_url = request.pr_url
+        pr.status = "pending"
+        pr.risk_score = None
+        pr.verdict = None
+        db.query(ScanResult).filter(ScanResult.pr_id == pr.id).delete()
+    else:
+        pr = PullRequest(
+            repo_name=normalized_repo,
+            pr_number=request.pr_number,
+            pr_url=request.pr_url,
+            status="pending",
+        )
+        db.add(pr)
+
+    db.commit()
+    _invalidate_read_caches()
+    db.refresh(pr)
+
+    background_tasks.add_task(run_ai_analysis_only, pr.id, request.pr_url)
+
+    return PRAnalysisStatusResponse(
+        id=pr.id,
+        status="pending",
+        risk_score=None,
+        verdict=None,
+        message=f"PR #{request.pr_number} queued for AI-only analysis. Poll /api/results/{pr.id}",
+    )
+
+
+@router.post("/analyze_pr", response_model=PRAnalysisStatusResponse, status_code=202)
 @router.post("/analyze", response_model=PRAnalysisStatusResponse, status_code=202)
 async def analyze_pull_request(
     request: PRAnalyzeRequest,
@@ -1053,3 +1257,167 @@ async def analyze_pull_request(
         verdict=None,
         message=f"PR #{request.pr_number} queued. Poll /api/results/{pr.id} for status.",
     )
+
+
+@router.post("/analyze_github")
+async def analyze_github(
+    payload: Dict[str, Any],
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Fetch top recent PRs from a GitHub repo and submit them for analysis.
+    Returns immediately with PR IDs for polling.
+    """
+    repo = payload.get("repo", "")
+    num_prs = payload.get("num_prs", 10)
+    target_pr_number = payload.get("target_pr_number")
+    enable_ai = payload.get("enable_ai", True)
+    enable_ml = payload.get("enable_ml", False)
+    enable_security_scan = payload.get("enable_security_scan", False)
+    
+    # If target specific PR requested, analyze only that one
+    if target_pr_number:
+        pr = (
+            db.query(PullRequest)
+            .filter(
+                PullRequest.repo_name == repo,
+                PullRequest.pr_number == target_pr_number,
+            )
+            .first()
+        )
+        if not pr:
+            pr = PullRequest(
+                repo_name=repo,
+                pr_number=target_pr_number,
+                pr_url=f"https://github.com/{repo}/pull/{target_pr_number}",
+                status="pending",
+            )
+            db.add(pr)
+        else:
+            pr.status = "pending"
+        db.commit()
+        db.refresh(pr)
+        
+        # Queue for AI-only analysis
+        if enable_ai:
+            background_tasks.add_task(run_ai_analysis_only, pr.id, pr.pr_url)
+        
+        return {
+            "repo": repo,
+            "total_prs_analyzed": 1,
+            "high_risk_count": 0,
+            "low_risk_count": 0,
+            "avg_risk_score": 0.0,
+            "predictions": [{
+                "pr_number": target_pr_number,
+                "title": f"PR #{target_pr_number}",
+                "author": "unknown",
+                "verdict": "PENDING",
+                "risk_score": 0.0,
+                "risk_label": "unknown",
+                "risk_percentage": 0.0,
+                "feature_importance": {},
+                "features": {},
+                "security_findings": [],
+                "url": pr.pr_url,
+                "created_at": datetime.utcnow().isoformat(),
+                "state": "open",
+                "model_version": "ai-only",
+                "using_fallback": False,
+                "snyk_vulnerabilities": [],
+                "semgrep_findings": [],
+                "ai_findings": [],
+                "ai_security_flags": [],
+                "ai_code_smells": [],
+                "ai_provider": settings.PR_AGENT_PROVIDER_NAME,
+                "ai_model": settings.PR_AGENT_MODEL_NAME,
+                "ai_summary": "Analysis queued",
+                "ai_status": "pending",
+                "scanner_results": [],
+            }]
+        }
+
+    # Fetch recent PRs from GitHub
+    pr_list = _api_get(
+        f"{GITHUB_API}/repos/{repo}/pulls",
+        {"state": "open", "sort": "updated", "direction": "desc", "per_page": num_prs}
+    )
+    
+    if not pr_list or not isinstance(pr_list, list):
+        return {
+            "repo": repo,
+            "total_prs_analyzed": 0,
+            "high_risk_count": 0,
+            "low_risk_count": 0,
+            "avg_risk_score": 0.0,
+            "predictions": [],
+        }
+
+    predictions = []
+    for gh_pr in pr_list[:num_prs]:
+        pr_num = gh_pr.get("number")
+        pr_url = gh_pr.get("html_url")
+        
+        # Create/update PR in DB
+        pr = (
+            db.query(PullRequest)
+            .filter(
+                PullRequest.repo_name == repo,
+                PullRequest.pr_number == pr_num,
+            )
+            .first()
+        )
+        if not pr:
+            pr = PullRequest(
+                repo_name=repo,
+                pr_number=pr_num,
+                pr_url=pr_url,
+                status="pending",
+            )
+            db.add(pr)
+        else:
+            pr.status = "pending"
+        db.commit()
+        db.refresh(pr)
+        
+        # Queue for AI-only analysis
+        if enable_ai:
+            background_tasks.add_task(run_ai_analysis_only, pr.id, pr_url)
+        
+        predictions.append({
+            "pr_number": pr_num,
+            "title": gh_pr.get("title", ""),
+            "author": (gh_pr.get("user") or {}).get("login", "unknown"),
+            "verdict": "PENDING",
+            "risk_score": 0.0,
+            "risk_label": "unknown",
+            "risk_percentage": 0.0,
+            "feature_importance": {},
+            "features": {},
+            "security_findings": [],
+            "url": pr_url,
+            "created_at": gh_pr.get("created_at", datetime.utcnow().isoformat()),
+            "state": gh_pr.get("state", "open"),
+            "model_version": "ai-only",
+            "using_fallback": False,
+            "snyk_vulnerabilities": [],
+            "semgrep_findings": [],
+            "ai_findings": [],
+            "ai_security_flags": [],
+            "ai_code_smells": [],
+            "ai_provider": settings.PR_AGENT_PROVIDER_NAME,
+            "ai_model": settings.PR_AGENT_MODEL_NAME,
+            "ai_summary": "Analysis queued",
+            "ai_status": "pending",
+            "scanner_results": [],
+        })
+
+    return {
+        "repo": repo,
+        "total_prs_analyzed": len(predictions),
+        "high_risk_count": 0,
+        "low_risk_count": 0,
+        "avg_risk_score": 0.0,
+        "predictions": predictions,
+    }

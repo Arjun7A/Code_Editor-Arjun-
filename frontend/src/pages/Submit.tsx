@@ -144,6 +144,11 @@ export default function SubmitPRPage() {
     e.preventDefault();
 
     const repoInput = submissionMethod === "url" ? formData.prUrl : formData.repository;
+    const runConfig = {
+      enableAI: Boolean(formData.enableAI),
+      enableML: Boolean(formData.enableML),
+      enableSecurityScan: Boolean(formData.enableSecurityScan),
+    };
 
     if (!repoInput) {
       toast({
@@ -180,9 +185,9 @@ export default function SubmitPRPage() {
 
       // Step 1: Security Scanning — await it first
       setCurrentStep(1);
-      setAnalysisProgress(25);
       let scanResult: PromiseSettledResult<Awaited<ReturnType<typeof scanCode>>>;
-      if (formData.enableSecurityScan) {
+      if (runConfig.enableSecurityScan) {
+        setAnalysisProgress(25);
         try {
           const scanData = await scanCode({ repoUrl: repo });
           scanResult = { status: "fulfilled", value: scanData };
@@ -206,25 +211,34 @@ export default function SubmitPRPage() {
           } as Awaited<ReturnType<typeof scanCode>>,
         };
         setScanResults(null);
+        setAnalysisProgress(35);
       }
       await new Promise((r) => setTimeout(r, 300));
 
       // Step 2: AI Analysis (visual — embedded inside analyze_github)
-      setCurrentStep(2);
-      setAnalysisProgress(50);
-      await new Promise((r) => setTimeout(r, 400));
+      if (runConfig.enableAI) {
+        setCurrentStep(2);
+        setAnalysisProgress(50);
+        await new Promise((r) => setTimeout(r, 400));
+      } else {
+        setAnalysisProgress(58);
+      }
 
       // Step 3: ML Risk Assessment
-      setCurrentStep(3);
-      setAnalysisProgress(65);
+      if (runConfig.enableML) {
+        setCurrentStep(3);
+        setAnalysisProgress(65);
+      } else {
+        setAnalysisProgress(72);
+      }
       // If a specific PR number was parsed from the URL, analyze only that PR.
       // Otherwise send 30 (backend max) — GitHub returns however many exist up to that cap.
       const prsToAnalyze = targetPrNumber ? 1 : 30;
       const mlData = await analyzeGitHubAndMap(repo, prsToAnalyze, {
         targetPrNumber: targetPrNumber ?? undefined,
-        enableAI: formData.enableAI,
-        enableML: formData.enableML,
-        enableSecurityScan: formData.enableSecurityScan,
+        enableAI: runConfig.enableAI,
+        enableML: runConfig.enableML,
+        enableSecurityScan: runConfig.enableSecurityScan,
       });
       const results = mlData.raw;
       setAnalysisResults(results);
@@ -242,10 +256,15 @@ export default function SubmitPRPage() {
       const scanIssues = scanResult.status === "fulfilled"
         ? ((scanResult.value.summary as any)?.total_issues ?? 0)
         : 0;
+      const modeSummary = [
+        runConfig.enableAI ? "AI on" : "AI off",
+        runConfig.enableML ? "ML on" : "ML off",
+        runConfig.enableSecurityScan ? "Scan on" : "Scan off",
+      ].join(", ");
 
       toast({
         title: "✅ Analysis Complete",
-        description: `Analyzed ${totalCount} PRs — ${highCount} high risk, ${scanIssues} security issues`,
+        description: `Analyzed ${totalCount} PRs — ${highCount} high risk, ${scanIssues} security issues (${modeSummary})`,
         variant: (highCount > 0 || scanIssues > 0) ? "destructive" : "default",
       });
     } catch (err: any) {
@@ -605,8 +624,32 @@ export default function SubmitPRPage() {
                                       <div className="space-y-2">
                                         <p className="text-sm font-medium text-foreground flex items-center gap-2">
                                           <Brain className="h-4 w-4 text-cyan-400" />
-                                          AI Agent Findings ({pr.ai_findings.length})
+                                          PR-Agent Findings ({pr.ai_findings.length})
                                         </p>
+                                        {(pr.ai_summary || pr.ai_status || pr.ai_provider || pr.ai_model) && (
+                                          <div className="rounded-md border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-200/90">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              {pr.ai_status && (
+                                                <Badge variant="outline" className="text-[10px] uppercase">
+                                                  {pr.ai_status}
+                                                </Badge>
+                                              )}
+                                              {pr.ai_provider && (
+                                                <Badge variant="outline" className="text-[10px]">
+                                                  {pr.ai_provider}
+                                                </Badge>
+                                              )}
+                                              {pr.ai_model && (
+                                                <Badge variant="outline" className="text-[10px]">
+                                                  {pr.ai_model}
+                                                </Badge>
+                                              )}
+                                            </div>
+                                            {pr.ai_summary && (
+                                              <p className="mt-2 text-xs text-cyan-100/90">{pr.ai_summary}</p>
+                                            )}
+                                          </div>
+                                        )}
                                         <div className="space-y-2">
                                           {pr.ai_findings.slice(0, 5).map((finding: any, i: number) => (
                                             <div
@@ -1025,7 +1068,7 @@ export default function SubmitPRPage() {
                             placeholder="https://github.com/org/repo/pull/123"
                             value={formData.prUrl}
                             onChange={(e) =>
-                              setFormData({ ...formData, prUrl: e.target.value })
+                              setFormData((prev) => ({ ...prev, prUrl: e.target.value }))
                             }
                             className="pl-10"
                           />
@@ -1046,10 +1089,10 @@ export default function SubmitPRPage() {
                                 placeholder="org/repository"
                                 value={formData.repository}
                                 onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
+                                  setFormData((prev) => ({
+                                    ...prev,
                                     repository: e.target.value,
-                                  })
+                                  }))
                                 }
                                 className="pl-10"
                               />
@@ -1064,10 +1107,10 @@ export default function SubmitPRPage() {
                                 placeholder="feature/new-feature"
                                 value={formData.branch}
                                 onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
+                                  setFormData((prev) => ({
+                                    ...prev,
                                     branch: e.target.value,
-                                  })
+                                  }))
                                 }
                                 className="pl-10"
                               />
@@ -1082,7 +1125,7 @@ export default function SubmitPRPage() {
                             placeholder="Add new authentication feature"
                             value={formData.title}
                             onChange={(e) =>
-                              setFormData({ ...formData, title: e.target.value })
+                              setFormData((prev) => ({ ...prev, title: e.target.value }))
                             }
                           />
                         </div>
@@ -1094,10 +1137,10 @@ export default function SubmitPRPage() {
                             placeholder="Describe the changes in this PR..."
                             value={formData.description}
                             onChange={(e) =>
-                              setFormData({
-                                ...formData,
+                              setFormData((prev) => ({
+                                ...prev,
                                 description: e.target.value,
-                              })
+                              }))
                             }
                             rows={3}
                           />
@@ -1110,10 +1153,10 @@ export default function SubmitPRPage() {
                             placeholder="Paste your git diff content here..."
                             value={formData.diffContent}
                             onChange={(e) =>
-                              setFormData({
-                                ...formData,
+                              setFormData((prev) => ({
+                                ...prev,
                                 diffContent: e.target.value,
-                              })
+                              }))
                             }
                             rows={10}
                             className="font-mono text-sm"
@@ -1161,16 +1204,25 @@ export default function SubmitPRPage() {
                               AI Analysis
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              LangChain + xAI Grok
+                              PR-Agent (open-source)
                             </p>
                           </div>
                         </div>
-                        <Switch
-                          checked={formData.enableAI}
-                          onCheckedChange={(checked: boolean) =>
-                            setFormData({ ...formData, enableAI: checked })
-                          }
-                        />
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={formData.enableAI ? "default" : "outline"}
+                            className={cn("text-[10px]", formData.enableAI && "bg-primary/20 text-primary")}
+                          >
+                            {formData.enableAI ? "ON" : "OFF"}
+                          </Badge>
+                          <Switch
+                            aria-label="Enable AI analysis"
+                            checked={formData.enableAI}
+                            onCheckedChange={(checked: boolean) =>
+                              setFormData((prev) => ({ ...prev, enableAI: checked }))
+                            }
+                          />
+                        </div>
                       </div>
 
                       <div
@@ -1201,12 +1253,21 @@ export default function SubmitPRPage() {
                             </p>
                           </div>
                         </div>
-                        <Switch
-                          checked={formData.enableML}
-                          onCheckedChange={(checked: boolean) =>
-                            setFormData({ ...formData, enableML: checked })
-                          }
-                        />
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={formData.enableML ? "default" : "outline"}
+                            className={cn("text-[10px]", formData.enableML && "bg-accent/20 text-accent")}
+                          >
+                            {formData.enableML ? "ON" : "OFF"}
+                          </Badge>
+                          <Switch
+                            aria-label="Enable ML scoring"
+                            checked={formData.enableML}
+                            onCheckedChange={(checked: boolean) =>
+                              setFormData((prev) => ({ ...prev, enableML: checked }))
+                            }
+                          />
+                        </div>
                       </div>
 
                       <div
@@ -1237,15 +1298,24 @@ export default function SubmitPRPage() {
                             </p>
                           </div>
                         </div>
-                        <Switch
-                          checked={formData.enableSecurityScan}
-                          onCheckedChange={(checked: boolean) =>
-                            setFormData({
-                              ...formData,
-                              enableSecurityScan: checked,
-                            })
-                          }
-                        />
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={formData.enableSecurityScan ? "default" : "outline"}
+                            className={cn("text-[10px]", formData.enableSecurityScan && "bg-success/20 text-success")}
+                          >
+                            {formData.enableSecurityScan ? "ON" : "OFF"}
+                          </Badge>
+                          <Switch
+                            aria-label="Enable security scanning"
+                            checked={formData.enableSecurityScan}
+                            onCheckedChange={(checked: boolean) =>
+                              setFormData((prev) => ({
+                                ...prev,
+                                enableSecurityScan: checked,
+                              }))
+                            }
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -1255,7 +1325,7 @@ export default function SubmitPRPage() {
                         <Select
                           value={formData.priority}
                           onValueChange={(value: string) =>
-                            setFormData({ ...formData, priority: value })
+                            setFormData((prev) => ({ ...prev, priority: value }))
                           }
                         >
                           <SelectTrigger id="priority">
@@ -1301,10 +1371,10 @@ export default function SubmitPRPage() {
                           <Switch
                             checked={formData.notifyOnComplete}
                             onCheckedChange={(checked: boolean) =>
-                              setFormData({
-                                ...formData,
+                              setFormData((prev) => ({
+                                ...prev,
                                 notifyOnComplete: checked,
-                              })
+                              }))
                             }
                           />
                         </div>

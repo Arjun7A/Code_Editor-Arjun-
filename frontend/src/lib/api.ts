@@ -133,6 +133,10 @@ interface BackendGitHubResponse {
     snyk_vulnerabilities: Record<string, unknown>[];
     semgrep_findings: Record<string, unknown>[];
     ai_findings: Record<string, unknown>[];
+    ai_security_flags?: string[];
+    ai_code_smells?: string[];
+    ai_provider?: string;
+    ai_model?: string | null;
     ai_summary: string;
     ai_status: string;
     scanner_results: Record<string, unknown>[];
@@ -207,16 +211,53 @@ function mapStatus(s: string): PRAnalysis["status"] {
   return (map[s] as PRAnalysis["status"]) ?? "queued";
 }
 
+function normalizeLayerStatus(value: unknown): PRAnalysis["aiStatus"] | undefined {
+  const raw = String(value ?? "").toLowerCase();
+  if (raw === "success" || raw === "failed" || raw === "skipped") {
+    return raw;
+  }
+  return undefined;
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? "").trim())
+    .filter((item) => item.length > 0);
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of values) {
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function isCliUsageText(value: unknown): boolean {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return false;
+  if (!text.startsWith("usage:")) return false;
+  return text.includes("--pr-url") || text.includes("--pr_url") || text.includes("supported git hosting service");
+}
+
+function extractRiskData(pr: BackendPR): Record<string, unknown> {
+  const audit = pr.audit_log;
+  if (!audit?.risk_data || typeof audit.risk_data !== "object") return {};
+  return audit.risk_data as Record<string, unknown>;
+}
+
 function mapBlockchainVerification(
   pr: BackendPR
 ): PRAnalysis["blockchainVerification"] | undefined {
   const audit = pr.audit_log;
   if (!audit) return undefined;
 
-  const riskData =
-    audit.risk_data && typeof audit.risk_data === "object"
-      ? (audit.risk_data as Record<string, unknown>)
-      : {};
+  const riskData = extractRiskData(pr);
   const chainMeta =
     riskData["blockchain"] && typeof riskData["blockchain"] === "object"
       ? (riskData["blockchain"] as Record<string, unknown>)
@@ -289,6 +330,47 @@ function mapBackendPR(pr: BackendPR): PRAnalysis {
       }))
     : [];
 
+  const riskData = extractRiskData(pr);
+  const aiStatusFromAudit = normalizeLayerStatus(riskData["ai_status"]);
+  const aiSummaryFromAudit =
+    typeof riskData["ai_summary"] === "string" ? String(riskData["ai_summary"]) : "";
+  const aiProviderFromAudit =
+    typeof riskData["ai_provider"] === "string" ? String(riskData["ai_provider"]) : "";
+  const aiModelFromAudit =
+    typeof riskData["ai_model"] === "string" ? String(riskData["ai_model"]) : null;
+
+  const aiSummaryFromScanResult =
+    typeof aiAgentResult?.summary === "string" ? aiAgentResult.summary : "";
+
+  const aiSummaryRaw = (aiSummaryFromAudit || aiSummaryFromScanResult).trim();
+  const aiSummary = isCliUsageText(aiSummaryRaw) ? "" : aiSummaryRaw;
+  const inferredAiStatus: PRAnalysis["aiStatus"] =
+    ((isCliUsageText(aiSummaryRaw)
+      || aiSummaryFromScanResult.toLowerCase().includes("failed")
+      || aiSummaryFromScanResult.toLowerCase().includes("error"))
+      ? "failed"
+      : (aiFindings.length > 0 || aiSummary ? "success" : "skipped"));
+  const aiStatus = isCliUsageText(aiSummaryRaw) ? "failed" : (aiStatusFromAudit ?? inferredAiStatus);
+
+  const aiSecurityFlagsFromAudit = parseStringArray(riskData["ai_security_flags"]);
+  const aiCodeSmellsFromAudit = parseStringArray(riskData["ai_code_smells"]);
+  const aiSecurityFlagsFromFindings = aiFindings
+    .filter((finding) => finding.type === "security")
+    .map((finding) => (finding.title || finding.description || "").trim())
+    .filter((text) => text.length > 0);
+  const aiCodeSmellsFromFindings = aiFindings
+    .filter((finding) => finding.type === "best_practice")
+    .map((finding) => (finding.title || finding.description || "").trim())
+    .filter((text) => text.length > 0);
+  const aiSecurityFlags = dedupeStrings(
+    aiSecurityFlagsFromAudit.length > 0 ? aiSecurityFlagsFromAudit : aiSecurityFlagsFromFindings
+  );
+  const aiCodeSmells = dedupeStrings(
+    aiCodeSmellsFromAudit.length > 0 ? aiCodeSmellsFromAudit : aiCodeSmellsFromFindings
+  );
+  const aiProvider = (aiProviderFromAudit || (aiAgentResult ? "pr-agent" : "")).trim();
+  const aiModel = aiModelFromAudit;
+
   // Build ScannerResult[] from stored scan results — use real severity_counts and execution_time
   const scannerResults: PRAnalysis["scannerResults"] = pr.scan_results
     ?.filter((r) => r.tool !== "summary")
@@ -296,24 +378,31 @@ function mapBackendPR(pr: BackendPR): PRAnalysis {
       const findings = Array.isArray(r.findings) ? r.findings : [];
       const sc = r.severity_counts ?? {};
       const summaryText = (r.summary ?? "").toLowerCase();
-      const status: "success" | "failed" | "skipped" =
+      let status: "success" | "failed" | "skipped" =
         summaryText.includes("failed") || summaryText.includes("error")
           ? "failed"
           : r.severity_counts !== null
             ? "success"
             : "skipped";
+      if (r.tool === "ai_agent") {
+        status = aiStatus ?? status;
+      }
       const toolName =
         r.tool === "snyk" ? "Snyk"
         : r.tool === "semgrep" ? "Semgrep"
-        : r.tool === "ai_agent" ? "AI Agent"
+        : r.tool === "ai_agent" ? "PR-Agent"
         : r.tool;
+      const summary =
+        r.tool === "ai_agent" && aiSummary
+          ? aiSummary
+          : r.summary ?? undefined;
       return {
         id: `sr-${pr.id}-${i}`,
         name: toolName,
         status,
         issuesFound: findings.length,
         executionTime: r.execution_time ?? 0,
-        summary: r.summary ?? undefined,
+        summary,
         severity: {
           critical: sc["critical"] ?? 0,
           high: sc["high"] ?? 0,
@@ -354,6 +443,12 @@ function mapBackendPR(pr: BackendPR): PRAnalysis {
     snykVulnerabilities,
     semgrepFindings,
     aiFindings,
+    aiSecurityFlags,
+    aiCodeSmells,
+    aiSummary,
+    aiStatus,
+    aiProvider: aiProvider || undefined,
+    aiModel,
     mlRiskFactors: Object.entries(pr.feature_importance ?? {}).map(([fname, fval]) => ({
       name: fname.replace(/_/g, " "),
       value: typeof fval === "number" ? fval : 0,
@@ -396,9 +491,63 @@ function mapGitHubPrediction(
       }))
     : [];
 
-  // Use real scanner results from the backend if present
-  const scannerResults: PRAnalysis["scannerResults"] =
-    (pred.scanner_results ?? []) as PRAnalysis["scannerResults"];
+  const aiStatus = normalizeLayerStatus(pred.ai_status) ?? "skipped";
+  const aiProvider = (pred.ai_provider ?? "pr-agent").trim();
+  const aiModel = pred.ai_model ?? null;
+  const aiSummaryRaw = (pred.ai_summary ?? "").trim();
+  const aiSummary = isCliUsageText(aiSummaryRaw) ? "" : aiSummaryRaw;
+  const aiSecurityFlags = dedupeStrings(
+    (parseStringArray(pred.ai_security_flags).length > 0
+      ? parseStringArray(pred.ai_security_flags)
+      : aiFindings
+          .filter((finding) => finding.type === "security")
+          .map((finding) => (finding.title || finding.description || "").trim())
+          .filter((text) => text.length > 0))
+  );
+  const aiCodeSmells = dedupeStrings(
+    (parseStringArray(pred.ai_code_smells).length > 0
+      ? parseStringArray(pred.ai_code_smells)
+      : aiFindings
+          .filter((finding) => finding.type === "best_practice")
+          .map((finding) => (finding.title || finding.description || "").trim())
+          .filter((text) => text.length > 0))
+  );
+
+  // Use real scanner results from the backend if present.
+  const scannerResults: PRAnalysis["scannerResults"] = (pred.scanner_results ?? []).map((r, i) => {
+    const rawName = String(r["name"] ?? "").trim();
+    const rawTool = String(r["tool"] ?? "").trim().toLowerCase();
+    const isAiRow = rawTool === "ai_agent" || rawName.toLowerCase() === "ai agent" || rawName.toLowerCase() === "pr-agent";
+    const rawStatus = String(r["status"] ?? "").toLowerCase();
+    const status: "success" | "failed" | "skipped" =
+      isAiRow
+        ? aiStatus
+        : (rawStatus === "success" || rawStatus === "failed" || rawStatus === "skipped")
+          ? rawStatus
+          : "success";
+    const severityValue = r["severity"];
+    const severityMap =
+      severityValue && typeof severityValue === "object"
+        ? (severityValue as Record<string, unknown>)
+        : {};
+
+    return {
+      id: String(r["id"] ?? `sr-gh-${pred.pr_number}-${i}`),
+      name: isAiRow
+        ? "PR-Agent"
+        : (rawName || (rawTool === "snyk" ? "Snyk" : rawTool === "semgrep" ? "Semgrep" : "Scanner")),
+      status,
+      issuesFound: Number(r["issuesFound"] ?? 0) || 0,
+      executionTime: Number(r["executionTime"] ?? 0) || 0,
+      summary: isAiRow ? aiSummary : (typeof r["summary"] === "string" ? r["summary"] : undefined),
+      severity: {
+        critical: Number(severityMap["critical"] ?? 0) || 0,
+        high: Number(severityMap["high"] ?? 0) || 0,
+        medium: Number(severityMap["medium"] ?? 0) || 0,
+        low: Number(severityMap["low"] ?? 0) || 0,
+      },
+    };
+  });
 
   return {
     id: `gh-${repo}-${pred.pr_number}`,
@@ -429,6 +578,12 @@ function mapGitHubPrediction(
     snykVulnerabilities,
     semgrepFindings,
     aiFindings,
+    aiSecurityFlags,
+    aiCodeSmells,
+    aiSummary,
+    aiStatus,
+    aiProvider,
+    aiModel,
     mlRiskFactors: Object.entries(pred.feature_importance ?? {}).map(([fname, fval]) => ({
       name: fname.replace(/_/g, " "),
       value: typeof fval === "number" ? fval : 0,
@@ -446,7 +601,7 @@ function mapGitHubPrediction(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function fetchDashboardStats(): Promise<DashboardStats> {
-  const data = await apiFetch<BackendStats>("/dashboard-stats");
+  const data = await apiFetch<BackendStats>("/dashboard-stats", { timeoutMs: 30000 });
   return {
     totalPRs: data.total_prs,
     approved: data.approved,
@@ -460,7 +615,8 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
 
 export async function fetchPRList(filters?: FilterOptions): Promise<PRAnalysis[]> {
   const params = new URLSearchParams({ skip: "0", limit: "200" });
-  const raw = await apiFetch<BackendPR[]>(`/results?${params}`);
+  // Extended timeout for fetching 200 PRs with all their relationships
+  const raw = await apiFetch<BackendPR[]>(`/results?${params}`, { timeoutMs: 60000 });
   const mapped = raw.map(mapBackendPR);
 
   // Guard against legacy duplicate DB rows for the same repo+PR.
@@ -487,6 +643,14 @@ export async function fetchPRList(filters?: FilterOptions): Promise<PRAnalysis[]
   if (filters?.riskLevel && filters.riskLevel !== "all") {
     prs = prs.filter((pr) => pr.riskLevel === filters.riskLevel);
   }
+  if (filters?.repository && filters.repository !== "all") {
+    const repoFilter = filters.repository.toLowerCase();
+    prs = prs.filter((pr) => {
+      const fullName = pr.repository.fullName.toLowerCase();
+      const name = pr.repository.name.toLowerCase();
+      return fullName === repoFilter || name === repoFilter;
+    });
+  }
   if (filters?.search) {
     const search = filters.search.toLowerCase();
     prs = prs.filter(
@@ -505,11 +669,11 @@ export async function fetchPRAnalysis(prId: string): Promise<PRAnalysis> {
   if (prId.startsWith("gh-")) {
     throw new Error("GitHub-sourced PRs are not stored in DB");
   }
-  const raw = await apiFetch<BackendPR>(`/results/${prId}`);
+  const raw = await apiFetch<BackendPR>(`/results/${prId}`, { timeoutMs: 30000 });
   const requested = Number(prId);
   if (Number.isInteger(requested) && requested > 0 && raw.pr_number !== requested) {
     try {
-      const list = await apiFetch<BackendPR[]>("/results?skip=0&limit=200");
+      const list = await apiFetch<BackendPR[]>("/results?skip=0&limit=200", { timeoutMs: 60000 });
       const sameRepo = list.filter(
         (pr) => pr.repo_name === raw.repo_name && pr.pr_number === requested
       );
@@ -532,7 +696,7 @@ export async function fetchPRAnalysis(prId: string): Promise<PRAnalysis> {
 export async function fetchAuditLogs(
   filters?: FilterOptions
 ): Promise<AuditLogEntry[]> {
-  const raw = await apiFetch<BackendPR[]>("/results?skip=0&limit=200");
+  const raw = await apiFetch<BackendPR[]>("/results?skip=0&limit=200", { timeoutMs: 60000 });
   let logs: AuditLogEntry[] = raw.map((pr) => {
     const audit = pr.audit_log;
     const riskData =
@@ -603,6 +767,28 @@ export async function submitPR(
       pr_number: prNumber,
       pr_url: repoUrl,
     }),
+    timeoutMs: 30000,
+  });
+
+  return { id: String(res.id), status: mapStatus(res.status) };
+}
+
+export async function submitPRForAIOnly(
+  repoUrl: string,
+  prNumber: number
+): Promise<{ id: string; status: ScanStatus }> {
+  // Parse owner/repo from URL
+  const match = repoUrl.match(/github\.com\/([^/]+\/[^/]+)/);
+  const repoName = match ? match[1].replace(/\.git$/, "") : repoUrl;
+
+  const res = await apiFetch<{ id: number; status: string }>("/analyze_ai_only", {
+    method: "POST",
+    body: JSON.stringify({
+      repo_name: repoName,
+      pr_number: prNumber,
+      pr_url: repoUrl,
+    }),
+    timeoutMs: 30000,
   });
 
   return { id: String(res.id), status: mapStatus(res.status) };
@@ -661,7 +847,7 @@ export async function fetchScannerMetrics(): Promise<
 }
 
 export async function fetchPolicyRules(): Promise<PolicyRule[]> {
-  const data = await apiFetch<BackendPolicyResponse>("/policy/rules");
+  const data = await apiFetch<BackendPolicyResponse>("/policy/rules", { timeoutMs: 30000 });
   const actionMap: Record<string, PolicyRule["action"]> = {
     BLOCK: "block",
     MANUAL_REVIEW: "warn",
@@ -691,7 +877,8 @@ export async function verifyBlockchainRecord(
   }
 
   const result = await apiFetch<BackendVerifyResponse>(
-    `/blockchain/verify/${idMatch[0]}`
+    `/blockchain/verify/${idMatch[0]}`,
+    { timeoutMs: 30000 }
   );
 
   return {
@@ -714,6 +901,7 @@ export async function scanCode(
     repoUrl = `https://github.com/${repoUrl}`;
   }
 
+  // Use extended timeout for scan (120s clone + 120s scanning + buffer = 300s)
   return apiFetch<BackendScanResponse>("/scan", {
     method: "POST",
     body: JSON.stringify({
@@ -721,6 +909,7 @@ export async function scanCode(
       repo_url: repoUrl,
       filename: options.filename ?? "code.py",
     }),
+    timeoutMs: 300000, // 5 minutes for clone + scanners
   });
 }
 

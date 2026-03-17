@@ -134,6 +134,12 @@ export interface PRAnalysis {
   snykVulnerabilities: Vulnerability[];
   semgrepFindings: SemgrepFinding[];
   aiFindings: AIFinding[];
+  aiSecurityFlags?: string[];
+  aiCodeSmells?: string[];
+  aiSummary?: string;
+  aiStatus?: "success" | "failed" | "skipped";
+  aiProvider?: string;
+  aiModel?: string | null;
   mlRiskFactors: MLRiskFactor[];
   scannerResults: ScannerResult[];
   blockchainVerification?: BlockchainVerification;

@@ -22,6 +22,10 @@ interface AIAnalysisSectionProps {
   findings: AIFinding[];
   status?: "success" | "failed" | "skipped";
   summary?: string;
+  provider?: string;
+  model?: string;
+  securityFlags?: string[];
+  codeSmells?: string[];
 }
 
 const typeConfig = {
@@ -53,10 +57,22 @@ const typeConfig = {
 
 /** Strip internal [provider=... model=...] prefix added by the backend. */
 function cleanSummary(raw: string): string {
-  return raw.replace(/^\[provider=[^\]]*\]\s*/i, "").trim();
+  const normalized = raw.replace(/^\[provider=[^\]]*\]\s*/i, "").trim();
+  if (/^usage:\s*/i.test(normalized) && /--pr[-_]url/i.test(normalized)) {
+    return "";
+  }
+  return normalized;
 }
 
-export function AIAnalysisSection({ findings, status, summary }: AIAnalysisSectionProps) {
+export function AIAnalysisSection({
+  findings,
+  status,
+  summary,
+  provider,
+  model,
+  securityFlags = [],
+  codeSmells = [],
+}: AIAnalysisSectionProps) {
   const effectiveStatus = status ?? "skipped";
   const hasFindings = findings.length > 0;
   const displaySummary = cleanSummary((summary || "").trim());
@@ -73,9 +89,9 @@ export function AIAnalysisSection({ findings, status, summary }: AIAnalysisSecti
           <Brain className="h-4 w-4 text-primary" />
         </div>
         <div className="flex-1">
-          <h3 className="font-semibold text-foreground">Grok AI Analysis</h3>
+          <h3 className="font-semibold text-foreground">PR-Agent Analysis</h3>
           <p className="text-xs text-muted-foreground">
-            AI-powered code intelligence and recommendations
+            Layer-2 AI insights from PR diff review
           </p>
         </div>
         <Badge className="bg-primary/10 text-primary">
@@ -85,6 +101,21 @@ export function AIAnalysisSection({ findings, status, summary }: AIAnalysisSecti
 
       {/* Findings */}
       <div className="p-4 space-y-3">
+        {(provider || model) && (
+          <div className="flex flex-wrap items-center gap-2">
+            {provider && (
+              <Badge variant="outline" className="text-xs">
+                provider: {provider}
+              </Badge>
+            )}
+            {model && (
+              <Badge variant="outline" className="text-xs">
+                model: {model}
+              </Badge>
+            )}
+          </div>
+        )}
+
         {effectiveStatus !== "success" && (
           <div
             className={cn(
@@ -106,6 +137,36 @@ export function AIAnalysisSection({ findings, status, summary }: AIAnalysisSecti
         {effectiveStatus === "success" && displaySummary && (
           <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground break-words">
             {displaySummary}
+          </div>
+        )}
+
+        {securityFlags.length > 0 && (
+          <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-destructive">
+              Security Flags ({securityFlags.length})
+            </p>
+            <div className="mt-2 space-y-1">
+              {securityFlags.map((item, idx) => (
+                <p key={`${item}-${idx}`} className="text-xs text-destructive/90 break-words">
+                  - {item}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {codeSmells.length > 0 && (
+          <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-warning">
+              Code Smells ({codeSmells.length})
+            </p>
+            <div className="mt-2 space-y-1">
+              {codeSmells.map((item, idx) => (
+                <p key={`${item}-${idx}`} className="text-xs text-warning break-words">
+                  - {item}
+                </p>
+              ))}
+            </div>
           </div>
         )}
 

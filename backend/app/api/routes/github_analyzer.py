@@ -18,12 +18,13 @@ from datetime import datetime, timezone
 import yaml
 from app.services.ml_predictor import MLPredictor
 from app.services.scanner_orchestrator import ScannerOrchestrator
-from app.services.ai_agent import AIAgent
 from app.services.policy_engine import PolicyEngine
 from app.services.blockchain_service import BlockchainService
 from app.services.cache_service import cache
 from app.core.config import settings
 from app.core.database import get_db
+from app.models.pipeline_contracts import PRContext
+from app.pipeline.ai_layer import PRAgentAdapter
 from app.models.database_models import (
     PullRequest as PRModel,
     ScanResult as ScanResultModel,
@@ -35,10 +36,13 @@ router = APIRouter()
 
 ml_predictor = MLPredictor(model_path=settings.ML_MODEL_PATH)
 scanner_orchestrator = ScannerOrchestrator()
-ai_agent = AIAgent(
-    api_key=settings.XAI_API_KEY,
-    model=settings.GROK_MODEL,
-    base_url=settings.XAI_API_BASE_URL,
+pr_agent_adapter = PRAgentAdapter(
+    binary=settings.PR_AGENT_BINARY,
+    timeout_seconds=settings.PR_AGENT_TIMEOUT_SECONDS,
+    provider_name=settings.PR_AGENT_PROVIDER_NAME,
+    model_name=settings.PR_AGENT_MODEL_NAME,
+    use_diff_mode=settings.PR_AGENT_USE_DIFF_MODE,
+    allow_module_fallback=settings.PR_AGENT_ALLOW_MODULE_FALLBACK,
 )
 policy_engine = PolicyEngine(policy_path=settings.POLICY_RULES_PATH)
 blockchain_service = BlockchainService()
@@ -135,7 +139,7 @@ def _invalidate_read_caches() -> None:
 
 class AnalyzeGitHubRequest(BaseModel):
     repo: str = Field(..., description="GitHub repo as 'owner/name'")
-    num_prs: int = Field(default=100, ge=1, le=100, description="Number of PRs to analyze (GitHub API max per_page=100)")
+    num_prs: int = Field(default=1, ge=1, le=100, description="Number of PRs to analyze (GitHub API max per_page=100)")
     target_pr_number: Optional[int] = Field(
         default=None,
         ge=1,
@@ -183,6 +187,8 @@ class PRPrediction(BaseModel):
     ai_summary: str = ""
     ai_status: str = "skipped"
     scanner_results: List[Dict[str, Any]] = []
+
+    model_config = {"protected_namespaces": ()}
 
 
 class AnalyzeGitHubResponse(BaseModel):
@@ -405,17 +411,21 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
     web_bytes = js_bytes + py_bytes
     lang_ratio = round(js_bytes / web_bytes, 3) if web_bytes > 0 else 0.5
 
+    prs: List[Dict[str, Any]] = []
     if target_pr_number:
         target_pr = _fetch_pr_detail(repo, target_pr_number)
-        if not target_pr:
-            raise HTTPException(
-                status_code=404,
-                detail=f"PR #{target_pr_number} not found for '{repo}'.",
+        if target_pr:
+            prs = [target_pr]
+        else:
+            logger.warning(
+                "Target PR #%s not found for '%s'; falling back to latest PRs.",
+                target_pr_number,
+                repo,
             )
-        prs: List[Dict[str, Any]] = [target_pr]
-    else:
+
+    if not prs:
         # Fetch recent PRs
-        prs = _api_get(
+        fetched_prs = _api_get(
             f"{GITHUB_API}/repos/{repo}/pulls",
             params={
                 "state": "all",
@@ -425,17 +435,19 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
             },
         )
 
-        if prs is None:
+        if fetched_prs is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"Could not fetch PRs from '{repo}'. Check the repo name and ensure GITHUB_TOKEN is set."
             )
 
-        if len(prs) == 0:
+        if len(fetched_prs) == 0:
             raise HTTPException(
                 status_code=404,
                 detail=f"No PRs found for '{repo}'."
             )
+        # Limit the number of PRs to process to avoid API timeout
+        prs = fetched_prs[:request.num_prs]
 
     # ── Clone repository once. Each PR will be checked out independently. ──
     tmp_dir: Optional[str] = None
@@ -490,44 +502,46 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
         # List of filenames changed in this PR (used for scanner filtering)
         changed_filenames = [f.get("filename", "") for f in files if f.get("filename")]
 
-        # LangChain AI analysis on GitHub diff patches (xAI Grok key).
+        # Layer-2 AI analysis via PR-Agent.
+        ai_exec_time = 0.0
         if enable_ai:
-            ai_result = await ai_agent.analyze_pr_diff(
-                files,
+            pr_diff = PRAgentAdapter.build_diff_from_files(files)
+            pr_context = PRContext(
                 repo=repo,
                 pr_number=pr_num,
+                commit_hash=str((merged_pr.get("head") or {}).get("sha") or ""),
+                diff=pr_diff,
+                files_changed=changed_filenames,
+                lines_added=additions,
+                lines_deleted=deletions,
             )
+            ai_started = datetime.utcnow()
+            ai_contract = pr_agent_adapter.analyze_pr(pr_context, scan_results={})
+            ai_exec_time = max(0.0, (datetime.utcnow() - ai_started).total_seconds())
+            ai_security_flags = list(ai_contract.get("ai_security_flags", []) or [])
+            ai_code_smells = list(ai_contract.get("ai_code_smells", []) or [])
+            ai_summary = str(ai_contract.get("ai_summary", "") or "").strip()
+            ai_findings = PRAgentAdapter.findings_from_contract(ai_contract)
+            ai_meta = pr_agent_adapter.last_meta()
+            ai_status = str(ai_meta.get("status", "failed") or "failed")
+            ai_provider = str(ai_meta.get("provider", settings.PR_AGENT_PROVIDER_NAME))
+            ai_model = str(ai_meta.get("model", settings.PR_AGENT_MODEL_NAME))
+            ai_error = str(ai_meta.get("error", "") or "").strip()
+            if ai_status == "failed" and not ai_summary and ai_error:
+                ai_summary = f"PR-Agent failed: {ai_error[:240]}"
+            elif ai_status == "skipped" and not ai_summary and ai_error:
+                ai_summary = f"PR-Agent skipped: {ai_error[:240]}"
         else:
-            ai_result = {
-                "findings": [],
-                "status": "skipped",
-                "provider": "disabled",
-                "model": None,
-                "summary": "AI analysis disabled by request",
-                "execution_time": 0.0,
-                "severity_counts": {"critical": 0, "high": 0, "medium": 0, "low": 0},
-            }
-        ai_findings_raw = ai_result.get("findings", [])
-        ai_findings = ai_findings_raw if isinstance(ai_findings_raw, list) else []
-        ai_status = _normalize_status(ai_result.get("status", "skipped"))
-        ai_provider = str(ai_result.get("provider", "none"))
-        ai_model = ai_result.get("model")
-        ai_summary = str(ai_result.get("summary", ""))
-        ai_exec_time = float(ai_result.get("execution_time", 0.0) or 0.0)
-        ai_counts_payload = ai_result.get("severity_counts", {})
-        ai_counts = {
-            "critical": int(ai_counts_payload.get("critical", 0)),
-            "high": int(ai_counts_payload.get("high", 0)),
-            "medium": int(ai_counts_payload.get("medium", 0)),
-            "low": int(ai_counts_payload.get("low", 0)),
-        } if isinstance(ai_counts_payload, dict) else _severity_counts(ai_findings)
+            ai_security_flags = []
+            ai_code_smells = []
+            ai_summary = "AI analysis disabled by request"
+            ai_findings = []
+            ai_status = "skipped"
+            ai_provider = "disabled"
+            ai_model = None
 
-        ai_high_security_findings = sum(
-            1 for finding in ai_findings
-            if str(finding.get("type", "")).lower() == "security"
-            and _to_float(finding.get("confidence", 0), 0.0) >= 0.8
-            and str(finding.get("severity", "")).lower() in ("critical", "high")
-        )
+        ai_counts = _severity_counts(ai_findings)
+        ai_high_security_findings = len(ai_security_flags)
 
         has_tests = any(
             any(p in f.get("filename", "").lower() for p in ["test", "spec", "__test__"])
@@ -639,7 +653,8 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
                 + review_comment_count
                 + len(pr_snyk)
                 + len(pr_semgrep)
-                + len(ai_findings)
+                + len(ai_security_flags)
+                + len(ai_code_smells)
             ),
             "num_severity": (
                 sensitive
@@ -653,6 +668,9 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
             "lang_ratio": lang_ratio,
             "historical_vuln_rate": round(sec_keywords / max(len(SECURITY_KEYWORDS), 1), 4),
             "head_sha": ((merged_pr.get("head") or {}).get("sha") or ""),
+            "ai_issue_count": len(ai_security_flags),
+            "ai_code_smell_count": len(ai_code_smells),
+            "ai_security_flags": len(ai_security_flags),
         }
 
         # Run ML prediction
@@ -749,8 +767,10 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
     avg_score = sum(p.risk_score for p in predictions) / len(predictions) if predictions else 0
 
     # ── Persist predictions to the database ──────────────────────────────
-    try:
-        for pred in predictions:
+    persisted_count = 0
+    persist_errors: List[str] = []
+    for pred in predictions:
+        try:
             # Upsert: check if this PR already exists
             existing = (
                 db.query(PRModel)
@@ -791,6 +811,7 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
                 existing.risk_score = risk_pct
                 existing.verdict = verdict
                 existing.status = "completed"
+                existing.pr_url = pred.url
                 existing.author_name = pred.author
                 existing.files_changed = int(pred.features.get("files_changed", 0))
                 existing.lines_added = int(pred.features.get("lines_added", 0))
@@ -819,7 +840,7 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
 
             scanner_rows = {
                 str(row.get("name", "")).lower(): row
-                for row in pred.scanner_results
+                for row in (pred.scanner_results or [])
             }
 
             snyk_row = scanner_rows.get("snyk", {})
@@ -868,7 +889,7 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
                 severity_counts=semgrep_counts if semgrep_status == "success" else None,
             ))
 
-            ai_row = scanner_rows.get("ai agent", scanner_rows.get("ai_agent", {}))
+            ai_row = scanner_rows.get("ai agent", scanner_rows.get("pr-agent", scanner_rows.get("ai_agent", {})))
             ai_status = _normalize_status(ai_row.get("status", pred.ai_status or "skipped"))
             ai_summary = (
                 (pred.ai_summary or "AI analysis skipped")
@@ -937,12 +958,32 @@ async def analyze_github_repo(request: AnalyzeGitHubRequest, db: Session = Depen
                     )
                 )
 
-        db.commit()
+            db.commit()
+            persisted_count += 1
+
+        except Exception as db_err:
+            db.rollback()
+            persist_errors.append(f"PR #{pred.pr_number}: {db_err}")
+            logger.exception(
+                "Failed to persist PR prediction for %s#%s",
+                repo,
+                pred.pr_number,
+            )
+
+    if persisted_count > 0:
         _invalidate_read_caches()
-        logger.info("Saved %d PR predictions to database for repo %s", len(predictions), repo)
-    except Exception as db_err:
-        logger.error("Failed to save predictions to DB: %s", db_err)
-        db.rollback()
+    logger.info(
+        "Saved %d/%d PR predictions to database for repo %s",
+        persisted_count,
+        len(predictions),
+        repo,
+    )
+    if persist_errors:
+        logger.warning(
+            "Persistence errors (%d): %s",
+            len(persist_errors),
+            " | ".join(persist_errors[:3]),
+        )
 
     return AnalyzeGitHubResponse(
         repo=repo,

@@ -235,7 +235,7 @@ export default function DashboardPage() {
                 filters={filters}
                 onFiltersChange={setFilters}
                 repositories={Array.from(
-                  new Set(prs.map((pr) => pr.repository.name))
+                  new Set(prs.map((pr) => pr.repository.fullName))
                 ).filter(Boolean)}
               />
             </section>

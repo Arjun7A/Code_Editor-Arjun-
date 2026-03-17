@@ -82,7 +82,10 @@ export default function PRDetailPage() {
   }
 
   const aiScannerResult = pr.scannerResults.find(
-    (result) => result.name.toLowerCase() === "ai agent"
+    (result) => {
+      const name = result.name.toLowerCase();
+      return name === "ai agent" || name === "pr-agent";
+    }
   );
   const semgrepScannerResult = pr.scannerResults.find(
     (result) => result.name.toLowerCase() === "semgrep"
@@ -232,8 +235,12 @@ export default function PRDetailPage() {
               />
               <AIAnalysisSection
                 findings={pr.aiFindings}
-                status={aiScannerResult?.status}
-                summary={aiScannerResult?.summary}
+                status={pr.aiStatus ?? aiScannerResult?.status}
+                summary={pr.aiSummary ?? aiScannerResult?.summary}
+                provider={pr.aiProvider}
+                model={pr.aiModel ?? undefined}
+                securityFlags={pr.aiSecurityFlags ?? []}
+                codeSmells={pr.aiCodeSmells ?? []}
               />
             </div>
           </TabsContent>
@@ -254,8 +261,12 @@ export default function PRDetailPage() {
             <div className="grid gap-6 lg:grid-cols-2">
               <AIAnalysisSection
                 findings={pr.aiFindings}
-                status={aiScannerResult?.status}
-                summary={aiScannerResult?.summary}
+                status={pr.aiStatus ?? aiScannerResult?.status}
+                summary={pr.aiSummary ?? aiScannerResult?.summary}
+                provider={pr.aiProvider}
+                model={pr.aiModel ?? undefined}
+                securityFlags={pr.aiSecurityFlags ?? []}
+                codeSmells={pr.aiCodeSmells ?? []}
               />
               <MLRiskBreakdown
                 riskScore={pr.riskScore}
