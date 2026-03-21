@@ -1,0 +1,39 @@
+# Virtual environment
+venv/
+env/
+
+# Environment variables
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Binaries
+*.exe
+*.bin
+gitleaks_report.json
+
+# Editor
+.vscode/
+
+# Folders not needed
+backend/
+blockchain/
+ml-model/
+
+# Misc
+*.toml
+LAYER_2_VERIFICAT*
+pr_agent*
+node_modules/
+dist/
+build/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
