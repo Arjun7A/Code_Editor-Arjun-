@@ -1,9 +1,9 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Verdict, RiskLevel } from "@/lib/types";
+import type { RiskLevel, Verdict } from "@/lib/types";
 
 interface VerdictBadgeProps {
   verdict: Verdict;
@@ -14,28 +14,29 @@ interface VerdictBadgeProps {
 }
 
 const verdictConfig = {
-  approved: {
-    label: "Approved",
+  clean: {
+    label: "Clean",
     icon: CheckCircle2,
-    bgClass: "bg-success/15",
-    textClass: "text-success",
-    borderClass: "border-success/30",
+    color: "#22c55e",
   },
-  blocked: {
-    label: "Blocked",
-    icon: XCircle,
-    bgClass: "bg-destructive/15",
-    textClass: "text-destructive",
-    borderClass: "border-destructive/30",
-  },
-  manual_review: {
-    label: "Manual Review",
+  issues_found: {
+    label: "Issues Found",
     icon: AlertTriangle,
-    bgClass: "bg-warning/15",
-    textClass: "text-warning",
-    borderClass: "border-warning/30",
+    color: "#eab308",
   },
-};
+  critical: {
+    label: "Critical",
+    icon: ShieldAlert,
+    color: "#ef4444",
+  },
+} as const;
+
+const riskLevelConfig = {
+  critical: { label: "CRITICAL", color: "#ef4444" },
+  high: { label: "HIGH", color: "#f97316" },
+  medium: { label: "MEDIUM", color: "#eab308" },
+  low: { label: "LOW", color: "#3b82f6" },
+} as const;
 
 const sizeConfig = {
   sm: "px-2 py-0.5 text-xs gap-1",
@@ -48,6 +49,14 @@ const iconSizeConfig = {
   md: "h-4 w-4",
   lg: "h-5 w-5",
 };
+
+function hexToRgba(hex: string, alpha: number) {
+  const normalized = hex.replace("#", "");
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
 
 export function VerdictBadge({
   verdict,
@@ -63,66 +72,36 @@ export function VerdictBadge({
     <span
       className={cn(
         "inline-flex items-center rounded-full border font-medium",
-        config.bgClass,
-        config.textClass,
-        config.borderClass,
         sizeConfig[size],
         className
       )}
+      style={{
+        color: config.color,
+        backgroundColor: hexToRgba(config.color, 0.16),
+        borderColor: hexToRgba(config.color, 0.35),
+      }}
     >
-      {showIcon && <Icon className={iconSizeConfig[size]} />}
+      {showIcon ? <Icon className={iconSizeConfig[size]} /> : null}
       {config.label}
     </span>
   );
 
-  if (animated) {
-    return (
-      <motion.div
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.3 }}
-      >
-        {badge}
-      </motion.div>
-    );
+  if (!animated) {
+    return badge;
   }
 
-  return badge;
+  return (
+    <motion.div initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }}>
+      {badge}
+    </motion.div>
+  );
 }
 
-// Risk Level Badge
 interface RiskLevelBadgeProps {
   level: RiskLevel;
   size?: "sm" | "md" | "lg";
   className?: string;
 }
-
-const riskLevelConfig = {
-  critical: {
-    label: "Critical",
-    bgClass: "bg-critical/15",
-    textClass: "text-critical",
-    borderClass: "border-critical/30",
-  },
-  high: {
-    label: "High",
-    bgClass: "bg-destructive/15",
-    textClass: "text-destructive",
-    borderClass: "border-destructive/30",
-  },
-  medium: {
-    label: "Medium",
-    bgClass: "bg-warning/15",
-    textClass: "text-warning",
-    borderClass: "border-warning/30",
-  },
-  low: {
-    label: "Low",
-    bgClass: "bg-success/15",
-    textClass: "text-success",
-    borderClass: "border-success/30",
-  },
-};
 
 export function RiskLevelBadge({
   level,
@@ -135,12 +114,14 @@ export function RiskLevelBadge({
     <span
       className={cn(
         "inline-flex items-center rounded-full border font-medium",
-        config.bgClass,
-        config.textClass,
-        config.borderClass,
         sizeConfig[size],
         className
       )}
+      style={{
+        color: config.color,
+        backgroundColor: hexToRgba(config.color, 0.16),
+        borderColor: hexToRgba(config.color, 0.35),
+      }}
     >
       {config.label}
     </span>

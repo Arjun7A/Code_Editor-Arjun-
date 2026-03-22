@@ -30,7 +30,7 @@ interface SidebarProps {
   selectedRepo?: string;
   selectedFilter?: string;
   repos?: Repository[];
-  filterCounts?: { all: number; approved: number; blocked: number; manual_review: number };
+  filterCounts?: { all: number; blocked: number; manual_review: number };
 }
 
 export function Sidebar({
@@ -39,7 +39,7 @@ export function Sidebar({
   selectedRepo = "all",
   selectedFilter = "all",
   repos = [],
-  filterCounts = { all: 0, approved: 0, blocked: 0, manual_review: 0 },
+  filterCounts = { all: 0, blocked: 0, manual_review: 0 },
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -49,13 +49,6 @@ export function Sidebar({
       label: "All PRs",
       icon: GitBranch,
       count: filterCounts.all,
-    },
-    {
-      id: "approved",
-      label: "Approved",
-      icon: CheckCircle2,
-      count: filterCounts.approved,
-      color: "text-success",
     },
     {
       id: "blocked",
@@ -219,12 +212,12 @@ export function Sidebar({
                 </p>
               )}
               {repos.map((repo) => {
-                const isActive = selectedRepo === repo.name;
+                const isActive = selectedRepo === repo.id;
 
                 return (
                   <motion.button
                     key={repo.id}
-                    onClick={() => onRepoSelect?.(repo.name)}
+                    onClick={() => onRepoSelect?.(repo.id)}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                       isActive

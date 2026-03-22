@@ -1,24 +1,16 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import {
-  History,
-  Search,
-  Filter,
-  Download,
-  ChevronDown,
-  ArrowUpDown,
-  ExternalLink,
-  CheckCircle2,
-  Clock,
-  XCircle,
-  Link2,
-  FileText,
-  X,
-} from "lucide-react";
+import { Download, ExternalLink, FileText, Search } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -27,635 +19,332 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Badge } from "@/components/ui/badge";
-import { VerdictBadge, RiskLevelBadge } from "@/components/ui/verdict-badge";
-import { RiskBar } from "@/components/ui/risk-gauge";
 import { TableRowSkeleton } from "@/components/ui/skeleton-loader";
-import { fetchAuditLogs, verifyBlockchainRecord } from "@/lib/api";
-import type { AuditLogEntry, FilterOptions, Verdict, RiskLevel } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { getDataset } from "@/lib/api";
+import type { AuditLogEntry, ScanRiskLevel, ScanRecord, Verdict } from "@/lib/types";
+import {
+  formatTimestamp,
+  getRepoName,
+  getScanRiskLevel,
+  getScanVerdict,
+  getTotalIssues,
+  hexToRgba,
+  sortScans,
+  toAuditLogEntry,
+} from "@/lib/scan-utils";
 
-type SortKey = "prNumber" | "timestamp" | "riskScore";
-type SortOrder = "asc" | "desc";
+const riskStyles: Record<ScanRiskLevel, string> = {
+  low: "#3b82f6",
+  medium: "#eab308",
+  high: "#ef4444",
+};
+
+const verdictStyles: Record<Verdict, string> = {
+  clean: "#22c55e",
+  issues_found: "#eab308",
+  critical: "#ef4444",
+};
 
 export default function AuditLogsPage() {
-  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [scans, setScans] = useState<ScanRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState<FilterOptions>({
-    verdict: "all",
-    riskLevel: "all",
-    search: "",
-  });
-  const [sortKey, setSortKey] = useState<SortKey>("timestamp");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
-  const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
-  const [verifyDialogOpen, setVerifyDialogOpen] = useState(false);
-  const [verifyPrId, setVerifyPrId] = useState("");
-  const [verifyResult, setVerifyResult] = useState<{
-    verified: boolean;
-    hash: string;
-    timestamp: string;
-  } | null>(null);
-  const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [riskFilter, setRiskFilter] = useState<ScanRiskLevel | "all">("all");
+  const [verdictFilter, setVerdictFilter] = useState<Verdict | "all">("all");
 
   useEffect(() => {
-    async function loadLogs() {
-      setLoading(true);
-      try {
-        const data = await fetchAuditLogs(filters);
-        setLogs(data);
-      } catch (error) {
-        console.error("[v0] Error loading audit logs:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadLogs();
-  }, [filters]);
+    void loadAuditLogs();
+  }, []);
 
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-    } else {
-      setSortKey(key);
-      setSortOrder("desc");
-    }
-  };
+  async function loadAuditLogs() {
+    setLoading(true);
+    setError(null);
 
-  const sortedLogs = [...logs].sort((a, b) => {
-    let comparison = 0;
-    switch (sortKey) {
-      case "prNumber":
-        comparison = a.prNumber - b.prNumber;
-        break;
-      case "timestamp":
-        comparison =
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-        break;
-      case "riskScore":
-        comparison = a.riskScore - b.riskScore;
-        break;
-    }
-    return sortOrder === "asc" ? comparison : -comparison;
-  });
-
-  const handleVerify = async () => {
-    if (!verifyPrId) return;
-    setVerifying(true);
     try {
-      const result = await verifyBlockchainRecord(verifyPrId);
-      setVerifyResult(result);
-    } catch (error) {
-      console.error("[v0] Error verifying:", error);
+      const dataset = await getDataset();
+      setScans(sortScans(dataset.scans));
+    } catch (loadError) {
+      const message =
+        loadError instanceof Error
+          ? loadError.message
+          : "We couldn't load the audit log dataset.";
+      setError(message);
+      setScans([]);
     } finally {
-      setVerifying(false);
+      setLoading(false);
     }
-  };
+  }
 
-  const exportCSV = () => {
-    const headers = [
+  const entries = useMemo(() => scans.map(toAuditLogEntry), [scans]);
+
+  const filteredEntries = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+
+    return entries.filter((entry) => {
+      if (riskFilter !== "all" && entry.riskLevel !== riskFilter) {
+        return false;
+      }
+
+      if (verdictFilter !== "all" && entry.verdict !== verdictFilter) {
+        return false;
+      }
+
+      if (!normalizedSearch) {
+        return true;
+      }
+
+      return [
+        entry.prNumber,
+        entry.repository.toLowerCase(),
+        entry.prUrl.toLowerCase(),
+      ].some((value) => value.includes(normalizedSearch));
+    });
+  }, [entries, riskFilter, search, verdictFilter]);
+
+  function exportAsJson() {
+    downloadFile(
+      JSON.stringify(scans, null, 2),
+      `secureaudit-audit-logs-${new Date().toISOString().slice(0, 10)}.json`,
+      "application/json"
+    );
+  }
+
+  function exportAsCsv() {
+    const header = [
       "PR ID",
       "Repository",
       "Verdict",
       "Risk Level",
       "Risk Score",
       "Timestamp",
-      "Blockchain Status",
+      "PR URL",
     ];
-    const rows = logs.map((log) => [
-      log.prNumber,
-      log.repository.fullName,
-      log.verdict,
-      log.riskLevel,
-      log.riskScore,
-      log.timestamp,
-      log.blockchainStatus,
-    ]);
-    const csv = [headers, ...rows].map((row) => row.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `audit-logs-${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-  };
 
-  const activeFiltersCount =
-    (filters.verdict && filters.verdict !== "all" ? 1 : 0) +
-    (filters.riskLevel && filters.riskLevel !== "all" ? 1 : 0) +
-    (dateRange.from ? 1 : 0);
+    const rows = filteredEntries.map((entry) => [
+      `#${entry.prNumber}`,
+      entry.repository,
+      getVerdictLabel(entry.verdict),
+      entry.riskLevel.toUpperCase(),
+      String(entry.riskScore),
+      entry.timestamp,
+      entry.prUrl,
+    ]);
+
+    const csv = [header, ...rows]
+      .map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+
+    downloadFile(
+      csv,
+      `secureaudit-audit-logs-${new Date().toISOString().slice(0, 10)}.csv`,
+      "text/csv"
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
 
       <main className="mx-auto max-w-screen-2xl px-4 py-6 lg:px-8">
-        {/* Page Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
-              <History className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                Audit Logs
-              </h1>
-              <p className="text-muted-foreground">
-                Historical records of all PR security analyses
-              </p>
-            </div>
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            Audit Logs
+          </h1>
+          <p className="mt-1 text-muted-foreground">
+            Review every saved scan and jump into the full findings when needed.
+          </p>
+        </div>
+
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <div className="relative min-w-[280px] flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="bg-secondary/30 pl-9"
+              placeholder="Search by PR number, repository, or PR URL"
+            />
           </div>
-        </motion.div>
 
-        {/* Filters & Actions */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="mb-6 space-y-4"
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Search */}
-            <div className="relative flex-1 min-w-50">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search by PR ID, repository..."
-                value={filters.search || ""}
-                onChange={(e) =>
-                  setFilters({ ...filters, search: e.target.value })
-                }
-                className="h-10 bg-secondary/30 pl-9"
-              />
-            </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">Risk Level</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => setRiskFilter("all")}>
+                All levels
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setRiskFilter("high")}>
+                HIGH
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setRiskFilter("medium")}>
+                MEDIUM
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setRiskFilter("low")}>
+                LOW
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-            {/* Verdict Filter */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="h-10 gap-2 bg-secondary/30">
-                  <Filter className="h-4 w-4" />
-                  Verdict
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuLabel>Filter by Verdict</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {(["all", "approved", "blocked", "manual_review"] as const).map(
-                  (v) => (
-                    <DropdownMenuItem
-                      key={v}
-                      onClick={() =>
-                        setFilters({ ...filters, verdict: v as Verdict | "all" })
-                      }
-                      className={cn(filters.verdict === v && "bg-accent")}
-                    >
-                      {v === "all"
-                        ? "All Verdicts"
-                        : v === "manual_review"
-                          ? "Manual Review"
-                          : v.charAt(0).toUpperCase() + v.slice(1)}
-                    </DropdownMenuItem>
-                  )
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">Verdict</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => setVerdictFilter("all")}>
+                All verdicts
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setVerdictFilter("clean")}>
+                Clean
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setVerdictFilter("issues_found")}>
+                Issues Found
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setVerdictFilter("critical")}>
+                Critical
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-            {/* Risk Level Filter */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="h-10 gap-2 bg-secondary/30">
-                  Risk Level
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuLabel>Filter by Risk</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {(["all", "critical", "high", "medium", "low"] as const).map(
-                  (level) => (
-                    <DropdownMenuItem
-                      key={level}
-                      onClick={() =>
-                        setFilters({
-                          ...filters,
-                          riskLevel: level as RiskLevel | "all",
-                        })
-                      }
-                      className={cn(filters.riskLevel === level && "bg-accent")}
-                    >
-                      {level === "all"
-                        ? "All Levels"
-                        : level.charAt(0).toUpperCase() + level.slice(1)}
-                    </DropdownMenuItem>
-                  )
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {/* Date Range */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="h-10 gap-2 bg-secondary/30">
-                  <Clock className="h-4 w-4" />
-                  Date Range
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="range"
-                  selected={{ from: dateRange.from, to: dateRange.to }}
-                  onSelect={(range) =>
-                    setDateRange({ from: range?.from, to: range?.to })
-                  }
-                  numberOfMonths={2}
-                />
-              </PopoverContent>
-            </Popover>
-
-            {/* Clear Filters */}
-            {activeFiltersCount > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setFilters({
-                    verdict: "all",
-                    riskLevel: "all",
-                    search: "",
-                  });
-                  setDateRange({});
-                }}
-                className="h-10 gap-1 text-muted-foreground"
-              >
-                <X className="h-4 w-4" />
-                Clear
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button className="gap-2">
+                <Download className="h-4 w-4" />
+                Export
               </Button>
-            )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={exportAsCsv}>
+                <FileText className="mr-2 h-4 w-4" />
+                Export CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={exportAsJson}>
+                <FileText className="mr-2 h-4 w-4" />
+                Export JSON
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
-            <div className="flex-1" />
-
-            {/* Verify Button */}
-            <Dialog open={verifyDialogOpen} onOpenChange={setVerifyDialogOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" className="h-10 gap-2 bg-transparent">
-                  <Link2 className="h-4 w-4" />
-                  Verify Record
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Verify Blockchain Record</DialogTitle>
-                  <DialogDescription>
-                    Enter a PR ID to verify its audit record on the blockchain.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <Input
-                    placeholder="Enter PR ID (e.g., pr-1)"
-                    value={verifyPrId}
-                    onChange={(e) => setVerifyPrId(e.target.value)}
-                  />
-                  <Button
-                    onClick={handleVerify}
-                    disabled={!verifyPrId || verifying}
-                    className="w-full"
-                  >
-                    {verifying ? "Verifying..." : "Verify on Blockchain"}
-                  </Button>
-
-                  {verifyResult && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={cn(
-                        "rounded-lg p-4",
-                        verifyResult.verified
-                          ? "bg-success/10"
-                          : "bg-destructive/10"
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        {verifyResult.verified ? (
-                          <CheckCircle2 className="h-5 w-5 text-success" />
-                        ) : (
-                          <XCircle className="h-5 w-5 text-destructive" />
-                        )}
-                        <span
-                          className={cn(
-                            "font-semibold",
-                            verifyResult.verified
-                              ? "text-success"
-                              : "text-destructive"
-                          )}
-                        >
-                          {verifyResult.verified
-                            ? "Record Verified"
-                            : "Verification Failed"}
-                        </span>
-                      </div>
-                      {verifyResult.verified && (
-                        <div className="mt-3 space-y-2 text-sm">
-                          <p className="text-muted-foreground">
-                            <span className="font-medium text-foreground">
-                              Hash:{" "}
-                            </span>
-                            <code className="text-xs">
-                              {verifyResult.hash.slice(0, 20)}...
-                            </code>
-                          </p>
-                          <p className="text-muted-foreground">
-                            <span className="font-medium text-foreground">
-                              Timestamp:{" "}
-                            </span>
-                            {new Date(verifyResult.timestamp).toLocaleString()}
-                          </p>
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
-                </div>
-              </DialogContent>
-            </Dialog>
-
-            {/* Export */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button className="h-10 gap-2">
-                  <Download className="h-4 w-4" />
-                  Export
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={exportCSV}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  Export as CSV
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <FileText className="mr-2 h-4 w-4" />
-                  Export as PDF
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+        {error ? (
+          <div className="mb-6 rounded-xl border border-border/60 bg-card/70 p-4 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Backend offline</p>
+            <p className="mt-1">{error}</p>
           </div>
+        ) : null}
 
-          {/* Active Filters */}
-          <AnimatePresence>
-            {activeFiltersCount > 0 && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="flex flex-wrap items-center gap-2"
-              >
-                <span className="text-sm text-muted-foreground">
-                  Active filters:
-                </span>
-                {filters.verdict && filters.verdict !== "all" && (
-                  <Badge
-                    variant="secondary"
-                    className="gap-1 bg-primary/10 text-primary"
-                  >
-                    Verdict: {filters.verdict.replace("_", " ")}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFilters({ ...filters, verdict: "all" })
-                      }
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                )}
-                {filters.riskLevel && filters.riskLevel !== "all" && (
-                  <Badge
-                    variant="secondary"
-                    className="gap-1 bg-primary/10 text-primary"
-                  >
-                    Risk: {filters.riskLevel}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFilters({ ...filters, riskLevel: "all" })
-                      }
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                )}
-                {dateRange.from && (
-                  <Badge
-                    variant="secondary"
-                    className="gap-1 bg-primary/10 text-primary"
-                  >
-                    Date range
-                    <button type="button" onClick={() => setDateRange({})}>
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-
-        {/* Table */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="overflow-hidden rounded-xl border border-border bg-card"
-        >
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card/80">
           <Table>
             <TableHeader>
-              <TableRow className="border-border hover:bg-transparent">
-                <TableHead
-                  className="cursor-pointer text-muted-foreground"
-                  onClick={() => handleSort("prNumber")}
-                >
-                  <div className="flex items-center gap-1">
-                    PR ID
-                    <ArrowUpDown className="h-3 w-3" />
-                  </div>
-                </TableHead>
-                <TableHead className="text-muted-foreground">
-                  Repository
-                </TableHead>
-                <TableHead className="text-muted-foreground">Verdict</TableHead>
-                <TableHead className="text-muted-foreground">
-                  Risk Level
-                </TableHead>
-                <TableHead
-                  className="cursor-pointer text-muted-foreground"
-                  onClick={() => handleSort("riskScore")}
-                >
-                  <div className="flex items-center gap-1">
-                    Risk Score
-                    <ArrowUpDown className="h-3 w-3" />
-                  </div>
-                </TableHead>
-                <TableHead
-                  className="cursor-pointer text-muted-foreground"
-                  onClick={() => handleSort("timestamp")}
-                >
-                  <div className="flex items-center gap-1">
-                    Timestamp
-                    <ArrowUpDown className="h-3 w-3" />
-                  </div>
-                </TableHead>
-                <TableHead className="text-muted-foreground">
-                  Blockchain
-                </TableHead>
-                <TableHead className="text-right text-muted-foreground">
-                  Actions
-                </TableHead>
+              <TableRow className="border-border/60 hover:bg-transparent">
+                <TableHead>PR ID</TableHead>
+                <TableHead>Repository</TableHead>
+                <TableHead>Verdict</TableHead>
+                <TableHead>Risk Level</TableHead>
+                <TableHead>Risk Score</TableHead>
+                <TableHead>Timestamp</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
+
             <TableBody>
               {loading ? (
-                Array.from({ length: 10 }).map((_, i) => (
-                  <TableRow key={i}>
-                    <TableCell colSpan={8} className="p-0">
+                Array.from({ length: 6 }).map((_, index) => (
+                  <TableRow key={index}>
+                    <TableCell colSpan={7} className="p-0">
                       <TableRowSkeleton />
                     </TableCell>
                   </TableRow>
                 ))
-              ) : sortedLogs.length === 0 ? (
+              ) : filteredEntries.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={8}
-                    className="h-40 text-center text-muted-foreground"
-                  >
-                    No audit logs found
+                  <TableCell colSpan={7} className="h-40 text-center text-muted-foreground">
+                    No audit logs found.
                   </TableCell>
                 </TableRow>
               ) : (
-                sortedLogs.map((log, index) => (
-                  <motion.tr
-                    key={log.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.02 }}
-                    className="border-border transition-colors hover:bg-muted/30"
-                  >
-                    <TableCell>
-                      <Link
-                        to={`/pr/${log.prId}`}
-                        className="flex items-center gap-2 font-mono text-sm font-medium text-foreground hover:text-primary"
-                      >
-                        #{log.prNumber}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-sm text-foreground">
-                      {log.repository.name}
+                filteredEntries.map((entry) => (
+                  <TableRow key={entry.id} className="border-border/60">
+                    <TableCell className="font-medium text-foreground">
+                      #{entry.prNumber}
                     </TableCell>
                     <TableCell>
-                      <VerdictBadge
-                        verdict={log.verdict}
-                        size="sm"
-                        animated={false}
+                      <div className="space-y-1">
+                        <p className="font-medium text-foreground">{entry.repository}</p>
+                        <a
+                          href={entry.prUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                        >
+                          View PR
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge
+                        label={getVerdictLabel(entry.verdict)}
+                        color={verdictStyles[entry.verdict]}
                       />
                     </TableCell>
                     <TableCell>
-                      <RiskLevelBadge level={log.riskLevel} size="sm" />
+                      <StatusBadge
+                        label={entry.riskLevel.toUpperCase()}
+                        color={riskStyles[entry.riskLevel]}
+                      />
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <RiskBar
-                          score={log.riskScore}
-                          showLabel={false}
-                          className="w-16"
-                        />
-                        <span className="text-sm font-medium text-foreground">
-                          {log.riskScore}
-                        </span>
-                      </div>
+                    <TableCell className="font-medium text-foreground">
+                      {entry.riskScore}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {new Date(log.timestamp).toLocaleString()}
-                    </TableCell>
-                    <TableCell>
-                      <BlockchainStatusBadge status={log.blockchainStatus} />
+                      {formatTimestamp(entry.timestamp)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button asChild variant="ghost" size="sm">
-                        <Link to={`/pr/${log.prId}`}>
-                          <ExternalLink className="h-4 w-4" />
-                        </Link>
+                      <Button asChild variant="outline" size="sm">
+                        <Link to={`/pr/${entry.prId}`}>View</Link>
                       </Button>
                     </TableCell>
-                  </motion.tr>
+                  </TableRow>
                 ))
               )}
             </TableBody>
           </Table>
-        </motion.div>
-
-        {/* Pagination Info */}
-        <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
-          <span>Showing {sortedLogs.length} records</span>
-          <span>Total: {logs.length} audit entries</span>
         </div>
       </main>
     </div>
   );
 }
 
-function BlockchainStatusBadge({
-  status,
-}: {
-  status: "verified" | "pending" | "failed";
-}) {
-  const config = {
-    verified: {
-      icon: CheckCircle2,
-      label: "Verified",
-      className: "bg-success/10 text-success border-success/30",
-    },
-    pending: {
-      icon: Clock,
-      label: "Pending",
-      className: "bg-warning/10 text-warning border-warning/30",
-    },
-    failed: {
-      icon: XCircle,
-      label: "Failed",
-      className: "bg-destructive/10 text-destructive border-destructive/30",
-    },
-  };
-
-  const { icon: Icon, label, className } = config[status];
-
+function StatusBadge({ label, color }: { label: string; color: string }) {
   return (
-    <Badge variant="outline" className={cn("gap-1", className)}>
-      <Icon className="h-3 w-3" />
+    <Badge
+      variant="outline"
+      className="font-semibold"
+      style={{
+        color,
+        backgroundColor: hexToRgba(color, 0.16),
+        borderColor: hexToRgba(color, 0.35),
+      }}
+    >
       {label}
     </Badge>
   );
+}
+
+function getVerdictLabel(verdict: Verdict) {
+  if (verdict === "clean") return "Clean";
+  if (verdict === "critical") return "Critical";
+  return "Issues Found";
+}
+
+function downloadFile(content: string, filename: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

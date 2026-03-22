@@ -1,14 +1,173 @@
-// Core Types for PR Risk Analysis Platform
+export type Severity = "critical" | "high" | "medium" | "low";
+export type RiskLevel = Severity;
+export type ScanRiskLevel = "low" | "medium" | "high";
+export type Verdict = "clean" | "issues_found" | "critical";
+export type QuickFilter = "all" | "blocked" | "manual_review";
 
-export type Verdict = "approved" | "blocked" | "manual_review";
-export type RiskLevel = "critical" | "high" | "medium" | "low";
-export type ScanStatus =
-  | "queued"
-  | "scanning"
-  | "analyzing"
-  | "blockchain"
-  | "completed"
-  | "failed";
+export interface ScanSummary {
+  total_issues: number;
+  semgrep: number;
+  osv: number;
+  ai_agent: number;
+  gitleaks: number;
+  checkov: number;
+  pr_files_scanned: number;
+}
+
+export interface IssueFinding {
+  tool: string;
+  severity: Severity;
+  message: string;
+  file?: string;
+  line?: number;
+  rule_id?: string;
+  package?: string;
+  explanation?: string;
+  fix?: string;
+}
+
+export interface GitleaksFinding {
+  tool: string;
+  severity: Severity;
+  message: string;
+  file?: string;
+  line?: number;
+  rule_id?: string;
+  secret_type?: string;
+  redacted?: string;
+  explanation?: string;
+  fix?: string;
+}
+
+export interface CheckovFinding {
+  tool: string;
+  severity: Severity;
+  message: string;
+  file?: string;
+  line?: number;
+  rule_id?: string;
+  check_name?: string;
+  resource?: string;
+  explanation?: string;
+  fix?: string;
+}
+
+export interface AIFix {
+  summary?: string;
+  before?: string;
+  after?: string;
+  steps?: string;
+}
+
+export interface AIFinding {
+  title: string;
+  severity: Severity;
+  file?: string;
+  category?: string;
+  cwe?: string;
+  explanation?: string;
+  fix?: AIFix | null;
+}
+
+export interface AIAudit {
+  status: string;
+  model?: string | null;
+  findings: AIFinding[];
+  error?: string | null;
+}
+
+export interface ScanRecord {
+  repo_url: string;
+  pr_url: string;
+  scanned_at?: string;
+  scan_summary: ScanSummary;
+  issues: IssueFinding[];
+  ai_audit: AIAudit;
+  gitleaks: GitleaksFinding[];
+  checkov: CheckovFinding[];
+}
+
+export interface DatasetResponse {
+  total: number;
+  scans: ScanRecord[];
+}
+
+export interface RawDashboardStats {
+  total_scans: number;
+  total_issues: number;
+}
+
+export interface DashboardStats {
+  totalScans: number;
+  totalIssues: number;
+}
+
+export interface FilterOptions {
+  search?: string;
+  repository?: string | "all";
+  quickFilter?: QuickFilter;
+  riskLevel?: ScanRiskLevel | RiskLevel | "all";
+  dateRange?: {
+    start: string;
+    end: string;
+  };
+}
+
+export interface ChartDataPoint {
+  label: string;
+  value: number;
+  date?: string;
+}
+
+export interface VerdictDistribution {
+  label: "LOW" | "MEDIUM" | "HIGH";
+  count: number;
+  color: string;
+}
+
+export interface SeverityBreakdown {
+  severity: Severity;
+  count: number;
+  color: string;
+}
+
+export interface ToolMetric {
+  name: string;
+  count: number;
+  color: string;
+}
+
+export interface RecentPRRow {
+  id: string;
+  prId: string;
+  prNumber: string;
+  repoName: string;
+  repoFullName: string;
+  repoUrl: string;
+  prUrl: string;
+  totalIssues: number;
+  scanSummary: ScanSummary;
+  scannedAt: string;
+  riskLevel: ScanRiskLevel;
+  verdict: Verdict;
+  scan: ScanRecord;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  prId: string;
+  prNumber: string;
+  repository: string;
+  repoUrl: string;
+  prUrl: string;
+  verdict: Verdict;
+  riskLevel: ScanRiskLevel;
+  riskScore: number;
+  timestamp: string;
+  scan: ScanRecord;
+}
+
+export type ScanStatus = "queued" | "scanning" | "completed" | "failed";
 
 export interface Author {
   id: string;
@@ -50,7 +209,7 @@ export interface SemgrepFinding {
   snippet?: string;
 }
 
-export interface AIFinding {
+export interface LegacyAIFinding {
   id: string;
   type: "security" | "logic" | "performance" | "best_practice";
   title: string;
@@ -115,70 +274,7 @@ export interface DiffLine {
   newLineNumber?: number;
 }
 
-export interface PRAnalysis {
-  id: string;
-  prNumber: number;
-  title: string;
-  description?: string;
-  repository: Repository;
-  author: Author;
-  status: ScanStatus;
-  verdict?: Verdict;
-  riskScore: number;
-  riskLevel: RiskLevel;
-  createdAt: string;
-  completedAt?: string;
-  filesChanged: number;
-  additions: number;
-  deletions: number;
-  snykVulnerabilities: Vulnerability[];
-  semgrepFindings: SemgrepFinding[];
-  aiFindings: AIFinding[];
-  aiSecurityFlags?: string[];
-  aiCodeSmells?: string[];
-  aiSummary?: string;
-  aiStatus?: "success" | "failed" | "skipped";
-  aiProvider?: string;
-  aiModel?: string | null;
-  mlRiskFactors: MLRiskFactor[];
-  scannerResults: ScannerResult[];
-  blockchainVerification?: BlockchainVerification;
-  codeDiffs: CodeDiff[];
-}
-
-export interface DashboardStats {
-  totalPRs: number;
-  approved: number;
-  blocked: number;
-  manualReview: number;
-  avgRiskScore: number;
-  criticalIssues: number;
-  scansTodayAmount: number;
-}
-
-export interface AuditLogEntry {
-  id: string;
-  prId: string;
-  prNumber: number;
-  repository: Repository;
-  verdict: Verdict;
-  riskLevel: RiskLevel;
-  riskScore: number;
-  timestamp: string;
-  blockchainStatus: "verified" | "pending" | "failed";
-  blockchainHash?: string;
-}
-
-export interface FilterOptions {
-  verdict?: Verdict | "all";
-  riskLevel?: RiskLevel | "all";
-  repository?: string | "all";
-  dateRange?: {
-    start: string;
-    end: string;
-  };
-  search?: string;
-}
+export type PRAnalysis = ScanRecord;
 
 export interface PolicyRule {
   id: string;
@@ -203,21 +299,4 @@ export interface APIKey {
   createdAt: string;
   lastUsed?: string;
   scopes: string[];
-}
-
-export interface ChartDataPoint {
-  date: string;
-  value: number;
-  label?: string;
-}
-
-export interface VerdictDistribution {
-  verdict: Verdict;
-  count: number;
-  percentage: number;
-}
-
-export interface SeverityBreakdown {
-  severity: RiskLevel;
-  count: number;
 }

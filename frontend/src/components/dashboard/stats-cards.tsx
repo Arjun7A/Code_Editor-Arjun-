@@ -1,44 +1,37 @@
 "use client";
 
 import { motion } from "framer-motion";
-import {
-  GitPullRequest,
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  TrendingUp,
-  Shield,
-  Activity,
-} from "lucide-react";
+import { Activity, ShieldAlert } from "lucide-react";
 import { AnimatedCounter } from "@/components/ui/animated-counter";
 import { StatCardSkeleton } from "@/components/ui/skeleton-loader";
 import type { DashboardStats } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 interface StatsCardsProps {
   stats: DashboardStats | null;
   loading?: boolean;
 }
 
-const cardVariants = {
-  hidden: { opacity: 0, y: 20 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: {
-      delay: i * 0.1,
-      duration: 0.5,
-      ease: [0.4, 0, 0.2, 1] as any,
-    },
-  }),
-};
+const cards = [
+  {
+    key: "totalScans",
+    label: "Total Scans",
+    icon: Activity,
+    accent: "bg-primary/15 text-primary",
+  },
+  {
+    key: "totalIssues",
+    label: "Total Issues",
+    icon: ShieldAlert,
+    accent: "bg-destructive/15 text-destructive",
+  },
+] as const;
 
 export function StatsCards({ stats, loading }: StatsCardsProps) {
   if (loading) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 7 }).map((_, i) => (
-          <StatCardSkeleton key={i} />
+      <div className="grid gap-4 md:grid-cols-2">
+        {cards.map((card) => (
+          <StatCardSkeleton key={card.key} />
         ))}
       </div>
     );
@@ -46,111 +39,36 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
 
   if (!stats) {
     return (
-      <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-5 text-sm text-destructive">
-        Dashboard statistics are unavailable because the backend response failed.
+      <div className="rounded-xl border border-border/60 bg-card/70 p-5 text-sm text-muted-foreground">
+        Dashboard stats will appear here once the backend responds.
       </div>
     );
   }
 
-  const cards = [
-    {
-      title: "Total PRs Analyzed",
-      value: stats.totalPRs,
-      icon: GitPullRequest,
-      color: "text-primary",
-      bgColor: "bg-primary/10",
-    },
-    {
-      title: "Approved",
-      value: stats.approved,
-      icon: CheckCircle2,
-      color: "text-success",
-      bgColor: "bg-success/10",
-    },
-    {
-      title: "Blocked",
-      value: stats.blocked,
-      icon: XCircle,
-      color: "text-destructive",
-      bgColor: "bg-destructive/10",
-    },
-    {
-      title: "Manual Review",
-      value: stats.manualReview,
-      icon: AlertTriangle,
-      color: "text-warning",
-      bgColor: "bg-warning/10",
-    },
-    {
-      title: "Avg Risk Score",
-      value: stats.avgRiskScore,
-      icon: TrendingUp,
-      color: "text-info",
-      bgColor: "bg-info/10",
-      formatFn: (v: number) => v.toFixed(1),
-      suffix: "%",
-    },
-    {
-      title: "Critical Issues",
-      value: stats.criticalIssues,
-      icon: Shield,
-      color: "text-critical",
-      bgColor: "bg-critical/10",
-    },
-    {
-      title: "Scans Today",
-      value: stats.scansTodayAmount,
-      icon: Activity,
-      color: "text-accent",
-      bgColor: "bg-accent/10",
-    },
-  ];
-
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+    <div className="grid gap-4 md:grid-cols-2">
       {cards.map((card, index) => {
         const Icon = card.icon;
+        const value = stats[card.key];
+
         return (
           <motion.div
-            key={card.title}
-            custom={index}
-            initial="hidden"
-            animate="visible"
-            variants={cardVariants}
-            whileHover={{ scale: 1.02, transition: { duration: 0.2 } }}
-            className="group relative overflow-hidden rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/30"
+            key={card.key}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.08 }}
+            className="rounded-xl border border-border/60 bg-card/80 p-5"
           >
-            {/* Glow effect on hover */}
-            <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-              <div
-                className={cn(
-                  "absolute -right-4 -top-4 h-24 w-24 rounded-full blur-2xl",
-                  card.bgColor
-                )}
-              />
-            </div>
-
-            <div className="relative">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted-foreground">
-                  {card.title}
-                </span>
-                <div className={cn("rounded-lg p-2", card.bgColor)}>
-                  <Icon className={cn("h-4 w-4", card.color)} />
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm text-muted-foreground">{card.label}</p>
+                <div className="mt-3 text-3xl font-semibold text-foreground">
+                  <AnimatedCounter value={value} />
                 </div>
               </div>
 
-              <div className="mt-3 flex items-baseline gap-2">
-                <AnimatedCounter
-                  value={card.value}
-                  className="text-2xl font-bold text-foreground"
-                  formatFn={card.formatFn}
-                />
-                {card.suffix && (
-                  <span className="text-lg font-semibold text-muted-foreground">
-                    {card.suffix}
-                  </span>
-                )}
+              <div className={`rounded-xl p-3 ${card.accent}`}>
+                <Icon className="h-5 w-5" />
               </div>
             </div>
           </motion.div>

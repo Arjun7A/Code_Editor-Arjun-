@@ -8,7 +8,6 @@ import {
   Menu,
   X,
   ChevronDown,
-  Settings,
   LogOut,
   User,
 } from "lucide-react";
@@ -29,7 +28,6 @@ const navLinks = [
   { href: "/", label: "Dashboard" },
   { href: "/audit-logs", label: "Audit Logs" },
   { href: "/submit", label: "Submit PR" },
-  { href: "/settings", label: "Settings" },
 ];
 
 export function Header() {
@@ -118,39 +116,20 @@ export function Header() {
                 className="relative h-9 w-9"
               >
                 <Bell className="h-4 w-4" />
-                <Badge className="absolute -right-1 -top-1 h-5 w-5 rounded-full bg-destructive p-0 text-xs text-destructive-foreground">
-                  3
-                </Badge>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-80">
               <div className="p-3">
                 <h4 className="font-medium">Notifications</h4>
                 <p className="text-sm text-muted-foreground">
-                  You have 3 unread notifications
+                  Scan notifications will appear here when this UI is connected to a live feed.
                 </p>
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="flex flex-col items-start gap-1 p-3">
-                <span className="text-sm font-medium">
-                  Critical vulnerability detected
-                </span>
+                <span className="text-sm font-medium">No notifications yet</span>
                 <span className="text-xs text-muted-foreground">
-                  PR #1234 in api-gateway - 2 min ago
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="flex flex-col items-start gap-1 p-3">
-                <span className="text-sm font-medium">Scan completed</span>
-                <span className="text-xs text-muted-foreground">
-                  PR #1233 approved - 15 min ago
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="flex flex-col items-start gap-1 p-3">
-                <span className="text-sm font-medium">
-                  Blockchain verification
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  Audit record confirmed - 1 hour ago
+                  Run a scan to start building activity here.
                 </span>
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -164,28 +143,24 @@ export function Header() {
                 className="hidden h-9 gap-2 px-2 md:flex"
               >
                 <Avatar className="h-7 w-7">
-                  <AvatarImage src="https://api.dicebear.com/7.x/initials/svg?seed=JD" />
-                  <AvatarFallback>JD</AvatarFallback>
+                  <AvatarImage src="https://api.dicebear.com/7.x/initials/svg?seed=SA" />
+                  <AvatarFallback>SA</AvatarFallback>
                 </Avatar>
-                <span className="text-sm font-medium">John Doe</span>
+                <span className="text-sm font-medium">SecureAudit</span>
                 <ChevronDown className="h-4 w-4 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <div className="p-2">
-                <p className="font-medium">John Doe</p>
+                <p className="font-medium">SecureAudit</p>
                 <p className="text-sm text-muted-foreground">
-                  john@acme-corp.com
+                  Frontend workspace
                 </p>
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem>
                 <User className="mr-2 h-4 w-4" />
                 Profile
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Settings className="mr-2 h-4 w-4" />
-                Settings
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive">

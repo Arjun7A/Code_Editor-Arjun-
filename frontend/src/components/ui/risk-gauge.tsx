@@ -31,11 +31,11 @@ function getRiskColor(score: number): string {
     case "critical":
       return "stroke-critical";
     case "high":
-      return "stroke-destructive";
+      return "stroke-[#f97316]";
     case "medium":
-      return "stroke-warning";
+      return "stroke-[#eab308]";
     case "low":
-      return "stroke-success";
+      return "stroke-[#3b82f6]";
   }
 }
 
@@ -45,11 +45,11 @@ function getRiskBgColor(score: number): string {
     case "critical":
       return "text-critical";
     case "high":
-      return "text-destructive";
+      return "text-[#f97316]";
     case "medium":
-      return "text-warning";
+      return "text-[#eab308]";
     case "low":
-      return "text-success";
+      return "text-[#3b82f6]";
   }
 }
 
@@ -146,10 +146,10 @@ export function RiskBar({ score, className, showLabel = true }: RiskBarProps) {
     level === "critical"
       ? "bg-critical"
       : level === "high"
-        ? "bg-destructive"
+        ? "bg-[#f97316]"
         : level === "medium"
-          ? "bg-warning"
-          : "bg-success";
+          ? "bg-[#eab308]"
+          : "bg-[#3b82f6]";
 
   return (
     <div className={cn("w-full", className)}>
