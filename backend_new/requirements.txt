@@ -220,8 +220,8 @@ python-json-logger==3.2.1
 python-multipart==0.0.22
 pytz==2025.1
 pyunormalize==17.0.0
-pywin32==311
-pywinpty==2.0.15
+pywin32==311; platform_system == "Windows"
+pywinpty==2.0.15; platform_system == "Windows"
 PyYAML==6.0.1
 pyzmq==26.2.1
 realtime==2.3.0
