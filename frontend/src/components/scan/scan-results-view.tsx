@@ -882,7 +882,7 @@ function DetailPanel({
   formatFix?: boolean;
   emptyText?: string;
 }) {
-  const content = text?.trim();
+  const content = typeof text === 'string' ? text.trim() : null;
 
   return (
     <div

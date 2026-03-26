@@ -77,32 +77,7 @@ def _find_semgrep() -> str:
 
 SEMGREP_CMD = _find_semgrep()
 print(f"[Semgrep] Using: {SEMGREP_CMD}")
-
-def _find_osv_scanner() -> str:
-    env_path = os.getenv("OSV_SCANNER_PATH")
-    if env_path and os.path.exists(env_path):
-        return env_path
-
-    local_candidates = [
-        "osv-scanner_windows_amd64.exe",
-        "osv-scanner.exe",
-        "osv-scanner",
-    ]
-    for candidate in local_candidates:
-        local_path = os.path.join(BASE_DIR, candidate)
-        if os.path.exists(local_path):
-            return local_path
-
-    path_scanner = _shutil.which("osv-scanner")
-    if path_scanner:
-        return path_scanner
-
-    print("[WARNING] osv-scanner not found. Install it or set OSV_SCANNER_PATH.")
-    return ""
-
-OSV_CMD     = _find_osv_scanner()
-if OSV_CMD:
-    print(f"[OSV] Using: {OSV_CMD}")
+OSV_CMD     = os.path.join(BASE_DIR, "osv-scanner_windows_amd64.exe")
 GROQ_MODEL  = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_CLIENT = Groq(api_key=_groq_key)
 
@@ -472,10 +447,6 @@ def _parse_osv_severity(vuln: dict) -> str:
 
 def run_osv(repo_path: str) -> list:
     try:
-        if not OSV_CMD:
-            print("[OSV] Skipping scan because osv-scanner is unavailable.")
-            return []
-
         result = subprocess.run(
             [OSV_CMD, "--recursive", "--format", "json", repo_path],
             stdout=subprocess.PIPE,
